@@ -45,6 +45,16 @@ fn size_one_stretching_is_rejected() {
 }
 
 #[test]
+fn grad_requires_scalar_output() {
+    let path = std::env::temp_dir().join("vector_grad_nonscalar.vec");
+    fs::write(&path, "fn f(x):\n  x * 2.0\n\nprint(grad(f, [1.0, 2.0]))\n").unwrap();
+    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(!output.status.success());
+    assert!(stderr.contains("scalar") && stderr.contains("[2]"), "{}", stderr);
+}
+
+#[test]
 fn matmul_contraction_mismatch_fails() {
     let path = std::env::temp_dir().join("vector_matmul_mismatch.vec");
     fs::write(&path, "print(matmul([[1.0, 2.0]], [[1.0, 2.0]]))\n").unwrap();

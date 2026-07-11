@@ -1,0 +1,44 @@
+fn norm_sq(xs):
+  sum(xs * xs)
+
+print(grad(norm_sq, [3.0, 4.0]))
+
+fn hinge(x):
+  sum(max(x, 0.0))
+
+print(grad(hinge, [1.0, -2.0]))
+
+fn mean_sq(x):
+  mean(x * x)
+
+print(grad(mean_sq, [3.0, 6.0]))
+
+fn lin(w):
+  sum(matmul([[1.0, 2.0], [3.0, 4.0]], w))
+
+print(grad(lin, [[1.0, 1.0], [1.0, 1.0]]))
+
+fn chain(x):
+  sum(sqrt(exp(x)))
+
+print(grad(chain, [0.0]))
+
+fn recip(x):
+  sum(1.0 / x)
+
+print(grad(recip, [2.0]))
+
+fn biased(b):
+  sum([[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]] + b)
+
+print(grad(biased, [0.0, 0.0, 0.0]))
+
+fn stacked(x):
+  sum([x, x] * [2.0, 3.0])
+
+print(grad(stacked, 5.0))
+
+fn first(w, b):
+  sum(w * b)
+
+print(grad(first, [1.0, 2.0], [3.0, 4.0]))

@@ -164,14 +164,21 @@ impl Parser {
 
     fn program(&mut self) -> Program {
         let mut fns = HashMap::new();
-        while matches!(self.peek(), Some(Tok::Fn)) {
-            let (name, decl) = self.decl();
-            if fns.insert(name.clone(), decl).is_some() {
-                die(&format!("duplicate function: {}", name));
+        let mut mains: Vec<Expr> = Vec::new();
+        while self.peek().is_some() {
+            if matches!(self.peek(), Some(Tok::Fn)) {
+                let (name, decl) = self.decl();
+                if fns.insert(name.clone(), decl).is_some() {
+                    die(&format!("duplicate function: {}", name));
+                }
+            } else {
+                let indent = self.peek_col().unwrap();
+                mains.push(self.body(indent));
             }
         }
-        let main_indent = self.peek_col().unwrap_or(1);
-        let main = self.body(main_indent);
+        let main = mains.into_iter()
+            .reduce(|a, b| Expr::Seq(Box::new(a), Box::new(b)))
+            .unwrap_or_else(|| die("program has no expressions"));
         Program { fns, main }
     }
 
@@ -318,13 +325,14 @@ impl Parser {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Dtype { F32, F64 }
+enum Dtype { F32, F64, I1 }
 
 impl Dtype {
     fn name(self) -> &'static str {
         match self {
             Dtype::F32 => "f32",
             Dtype::F64 => "f64",
+            Dtype::I1 => "i1",
         }
     }
 }
@@ -372,6 +380,9 @@ enum OpKind {
     Concat,
     Reduce(Vec<usize>),
     Dot(Vec<usize>, Vec<usize>),
+    Compare(String),
+    Select,
+    Slice(usize, usize),
 }
 
 #[derive(Debug, Clone)]
@@ -426,6 +437,134 @@ impl Tracer {
 
     fn reshape(&mut self, v: &Val, shape: Vec<usize>) -> Val {
         self.emit(OpKind::Reshape, vec![v.id], shape, v.dtype)
+    }
+
+    fn compare(&mut self, dir: &str, a: &Val, b: &Val) -> Val {
+        self.emit(OpKind::Compare(dir.to_string()), vec![a.id, b.id], a.shape.clone(), Dtype::I1)
+    }
+
+    fn select(&mut self, pred: &Val, on_true: &Val, on_false: &Val) -> Val {
+        self.emit(OpKind::Select, vec![pred.id, on_true.id, on_false.id], on_true.shape.clone(), on_true.dtype)
+    }
+
+    fn zeros_like(&mut self, v: &Val) -> Val {
+        let zero = self.constant(0.0, v.dtype);
+        if v.shape.is_empty() { zero } else { self.broadcast(&zero, &v.shape.clone()) }
+    }
+
+    fn backward(&mut self, y: &Val, x: &Val) -> Val {
+        let mut cot: HashMap<usize, Val> = HashMap::new();
+        let seed = self.constant(1.0, y.dtype);
+        cot.insert(y.id, seed);
+        for id in (0..=y.id).rev() {
+            let Some(g) = cot.get(&id).cloned() else { continue };
+            for (input_id, contribution) in self.vjp(id, &g) {
+                let merged = match cot.remove(&input_id) {
+                    Some(prev) => self.ewise("add", prev, contribution),
+                    None => contribution,
+                };
+                cot.insert(input_id, merged);
+            }
+        }
+        match cot.remove(&x.id) {
+            Some(v) => v,
+            None => self.zeros_like(x),
+        }
+    }
+
+    fn vjp(&mut self, id: usize, g: &Val) -> Vec<(usize, Val)> {
+        let node = self.nodes[id].clone();
+        let out = self.val(id);
+        let ins: Vec<Val> = node.inputs.iter().map(|&i| self.val(i)).collect();
+        match &node.kind {
+            OpKind::Constant(_) | OpKind::Compare(_) => vec![],
+            OpKind::Ewise(name) => match name.as_str() {
+                "add" => vec![(ins[0].id, g.clone()), (ins[1].id, g.clone())],
+                "subtract" => {
+                    let db = self.unary("negate", g);
+                    vec![(ins[0].id, g.clone()), (ins[1].id, db)]
+                }
+                "multiply" => {
+                    let da = self.ewise("multiply", g.clone(), ins[1].clone());
+                    let db = self.ewise("multiply", g.clone(), ins[0].clone());
+                    vec![(ins[0].id, da), (ins[1].id, db)]
+                }
+                "divide" => {
+                    let da = self.ewise("divide", g.clone(), ins[1].clone());
+                    let g_out = self.ewise("multiply", g.clone(), out);
+                    let quotient = self.ewise("divide", g_out, ins[1].clone());
+                    let db = self.unary("negate", &quotient);
+                    vec![(ins[0].id, da), (ins[1].id, db)]
+                }
+                "maximum" | "minimum" => {
+                    let dir = if name == "maximum" { "GE" } else { "LE" };
+                    let pred = self.compare(dir, &ins[0], &ins[1]);
+                    let zero = self.zeros_like(g);
+                    let da = self.select(&pred, g, &zero);
+                    let db = self.select(&pred, &zero, g);
+                    vec![(ins[0].id, da), (ins[1].id, db)]
+                }
+                _ => die(&format!("no gradient rule for {}", name)),
+            },
+            OpKind::Unary(name) => {
+                let da = match name.as_str() {
+                    "negate" => self.unary("negate", g),
+                    "exponential" => self.ewise("multiply", g.clone(), out),
+                    "log" => self.ewise("divide", g.clone(), ins[0].clone()),
+                    "sqrt" => {
+                        let two = self.constant(2.0, node.dtype);
+                        let denom = self.ewise("multiply", two, out);
+                        self.ewise("divide", g.clone(), denom)
+                    }
+                    "tanh" => {
+                        let one = self.constant(1.0, node.dtype);
+                        let squared = self.ewise("multiply", out.clone(), out);
+                        let sech2 = self.ewise("subtract", one, squared);
+                        self.ewise("multiply", g.clone(), sech2)
+                    }
+                    _ => die(&format!("no gradient rule for {}", name)),
+                };
+                vec![(ins[0].id, da)]
+            }
+            OpKind::Convert => vec![(ins[0].id, self.convert(g, ins[0].dtype))],
+            OpKind::Broadcast(dims) => {
+                let axes: Vec<usize> = (0..node.shape.len()).filter(|d| !dims.contains(d)).collect();
+                let da = self.reduce_sum(g, &axes);
+                vec![(ins[0].id, da)]
+            }
+            OpKind::Reshape => vec![(ins[0].id, self.reshape(g, ins[0].shape.clone()))],
+            OpKind::Concat => {
+                let mut contribs = Vec::new();
+                for (i, &input_id) in node.inputs.iter().enumerate() {
+                    let shape = self.nodes[input_id].shape.clone();
+                    let row = self.emit(OpKind::Slice(i, i + 1), vec![g.id], shape, g.dtype);
+                    contribs.push((input_id, row));
+                }
+                contribs
+            }
+            OpKind::Reduce(axes) => {
+                let kept: Vec<usize> = (0..ins[0].shape.len()).filter(|d| !axes.contains(d)).collect();
+                let da = self.broadcast_along(g, &ins[0].shape.clone(), kept);
+                vec![(ins[0].id, da)]
+            }
+            OpKind::Dot(_, _) => {
+                let (a, b) = (ins[0].clone(), ins[1].clone());
+                let (da, db) = match (a.shape.len(), b.shape.len()) {
+                    (2, 2) => (self.dot(g, &b, vec![1], vec![1]), self.dot(&a, g, vec![0], vec![0])),
+                    (1, 2) => (self.dot(&b, g, vec![1], vec![0]), self.dot(&a, g, vec![], vec![])),
+                    (2, 1) => (self.dot(g, &b, vec![], vec![]), self.dot(&a, g, vec![0], vec![0])),
+                    _ => (self.ewise("multiply", g.clone(), b.clone()), self.ewise("multiply", g.clone(), a.clone())),
+                };
+                vec![(a.id, da), (b.id, db)]
+            }
+            OpKind::Select => {
+                let zero = self.zeros_like(g);
+                let dt = self.select(&ins[0], g, &zero);
+                let df = self.select(&ins[0], &zero, g);
+                vec![(ins[1].id, dt), (ins[2].id, df)]
+            }
+            OpKind::Slice(_, _) => die("no gradient rule for slice (higher-order grad through array literals isn't supported yet)"),
+        }
     }
 
     fn ewise(&mut self, name: &str, a: Val, b: Val) -> Val {
@@ -639,6 +778,28 @@ impl Tracer {
                 let b = self.trace(&args[1], env, fns);
                 self.matmul(a, b)
             }
+            "grad" => {
+                let fname = match args.first() {
+                    Some(Expr::Var(s)) => s.clone(),
+                    _ => die("grad expects a function name as its first argument"),
+                };
+                let decl = fns.get(&fname)
+                    .unwrap_or_else(|| die(&format!("undefined function: {}", fname)));
+                if args.len() - 1 != decl.params.len() {
+                    die(&format!("grad({}) expects {} args after the function name, got {}",
+                                 fname, decl.params.len(), args.len() - 1));
+                }
+                let vals: Vec<Val> = args[1..].iter().map(|a| self.trace(a, env, fns)).collect();
+                let mut env2 = HashMap::new();
+                for (param, v) in decl.params.iter().zip(&vals) {
+                    env2.insert(param.clone(), v.clone());
+                }
+                let y = self.trace(&decl.body, &env2, fns);
+                if !y.shape.is_empty() {
+                    die(&format!("grad requires a scalar-valued function; {} returned shape {:?}", fname, y.shape));
+                }
+                self.backward(&y, &vals[0])
+            }
             _ => die(&format!("undefined function: {}", name)),
         }
     }
@@ -678,6 +839,19 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
             "stablehlo.dot_general {}, {}, contracting_dims = [{}] x [{}] : ({}, {}) -> {}",
             arg(0), arg(1), join(lc), join(rc), t(0), t(1), out
         ),
+        OpKind::Compare(dir) => format!(
+            "stablehlo.compare {}, {}, {} : ({}, {}) -> {}",
+            dir, arg(0), arg(1), t(0), t(1), out
+        ),
+        OpKind::Select => format!(
+            "stablehlo.select {}, {}, {} : {}, {}",
+            arg(0), arg(1), arg(2), t(0), out
+        ),
+        OpKind::Slice(start, limit) => {
+            let mut ranges = vec![format!("{}:{}", start, limit)];
+            ranges.extend(node.shape[1..].iter().map(|&d| format!("0:{}", d)));
+            format!("stablehlo.slice {} [{}] : ({}) -> {}", arg(0), ranges.join(", "), t(0), out)
+        }
     }
 }
 
