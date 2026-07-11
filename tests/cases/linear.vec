@@ -1,0 +1,8 @@
+layer = Linear(2, 3)
+print(layer.b)
+print(layer([0.0, 0.0]))
+g = glorot_uniform(8, 8)
+print(sum(where(g * g <= 0.375, 1.0, 0.0)))
+h = he_normal(4, 4)
+print(sum(h * 0.0))
+print(sum(lecun_uniform(6, 2) * 0.0))

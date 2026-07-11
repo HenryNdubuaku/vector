@@ -2,6 +2,7 @@ mod emit;
 mod grad;
 mod graph;
 mod lexer;
+mod linear;
 mod npy;
 mod parser;
 mod runtime;
@@ -63,11 +64,13 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>) {
         modules: HashMap::new(),
     };
     let prog = p.program();
+    let mut modules = linear::stdlib_modules();
+    modules.extend(prog.modules);
     let mut tracer = Tracer {
         nodes: Vec::new(),
         prints: Vec::new(),
         inputs: Vec::new(),
-        modules: prog.modules,
+        modules,
         statics: Vec::new(),
         rng: 0x243F6A8885A308D3,
         claimed: std::collections::HashSet::new(),

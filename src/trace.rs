@@ -809,6 +809,14 @@ impl Tracer {
                 let val = self.reshape(&v.val, shape);
                 TVal::Tensor(BVal { val, bdims: v.bdims })
             }
+            "glorot_uniform" | "glorot_normal" | "he_uniform" | "he_normal" | "lecun_uniform" | "lecun_normal" => {
+                if args.len() != 2 {
+                    die(&format!("{} expects (fan_in, fan_out), got {} args", name, args.len()));
+                }
+                let fan_in = self.int_lit(&args[0], env, "fan_in");
+                let fan_out = self.int_lit(&args[1], env, "fan_out");
+                self.initializer(name, fan_in, fan_out)
+            }
             "zeros" | "randn" => {
                 if args.is_empty() {
                     die(&format!("{} expects dimension literals", name));
@@ -1097,7 +1105,7 @@ impl Tracer {
         n as usize
     }
 
-    fn next_u64(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         self.rng = self.rng.wrapping_add(0x9E3779B97F4A7C15);
         let mut z = self.rng;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
@@ -1105,7 +1113,7 @@ impl Tracer {
         z ^ (z >> 31)
     }
 
-    fn next_normal(&mut self) -> f64 {
+    pub fn next_normal(&mut self) -> f64 {
         let u1 = ((self.next_u64() >> 11) as f64 / (1u64 << 53) as f64).max(1e-12);
         let u2 = (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64;
         (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()

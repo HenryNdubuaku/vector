@@ -28,15 +28,9 @@ fn cross_entropy(logits, label):
   log_probs = shifted - log(sum(exp(shifted)))
   -sum(label * log_probs)
 
-module Dense(in_size, out_size):
-  w = randn(in_size, out_size)
-  b = randn(out_size)
-  forward(self, x):
-    matmul(x, self.w) + self.b
-
 module Classifier(hidden):
-  l1 = Dense(2, hidden)
-  l2 = Dense(hidden, 3)
+  l1 = Linear(2, hidden)
+  l2 = Linear(hidden, 3)
   forward(self, x):
     self.l2(tanh(self.l1(x)))
   loss(self, inputs, targets):
