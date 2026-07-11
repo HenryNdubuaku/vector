@@ -7,4 +7,4 @@ Pure functions outside the tracer; no hidden global mutation.
 Fewest lines that stay readable — prefer a comprehension or a dict dispatch over branching boilerplate, but never golf at the cost of clarity.
 Flat layout, small files. Split only when a file stops being scannable in one screen.
 Shape rules fail loud at trace time with the offending shapes in the message.
-No dependency added without a concrete need; NumPy + the StableHLO/PJRT bindings only.
+No dependency added without a concrete need; the pjrt crate (PJRT/StableHLO bindings) only.

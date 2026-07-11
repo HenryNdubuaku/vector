@@ -1,6 +1,9 @@
 # Compiled output
 /target/
 
+# PJRT plugin binaries (downloaded, ~180MB)
+/plugins/
+
 # Cargo.lock — keep it for binaries/applications, ignore it for libraries
 # Uncomment the next line only if this is a library crate
 # Cargo.lock
@@ -17,4 +20,4 @@
 .idea/
 .vscode/
 *.swp
-
+*.lock

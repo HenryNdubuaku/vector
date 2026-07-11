@@ -4,3 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+pjrt = { git = "https://github.com/rai-explorers/pjrt-rs", rev = "123417011db34a599794940f35f129ab218ccddc" }

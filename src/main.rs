@@ -3,6 +3,9 @@ use std::env;
 use std::fs;
 use std::process::exit;
 
+use pjrt::ProgramFormat::MLIR;
+use pjrt::{Client, HostBuffer, LoadedExecutable};
+
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {
     Num(f64),
@@ -116,27 +119,6 @@ struct Decl {
 struct Program {
     fns: HashMap<String, Decl>,
     main: Expr,
-}
-
-#[derive(Debug, Clone)]
-enum TensorData {
-    F32(Vec<f32>),
-    F64(Vec<f64>),
-}
-
-#[derive(Debug, Clone)]
-struct Tensor {
-    data: TensorData,
-    shape: Vec<usize>,
-}
-
-impl Tensor {
-    fn dtype(&self) -> &'static str {
-        match &self.data {
-            TensorData::F32(_) => "f32",
-            TensorData::F64(_) => "f64",
-        }
-    }
 }
 
 struct Parser {
@@ -325,199 +307,317 @@ impl Parser {
     }
 }
 
-trait Numeric:
-    Copy
-    + std::ops::Add<Output = Self>
-    + std::ops::Sub<Output = Self>
-    + std::ops::Mul<Output = Self>
-    + std::ops::Div<Output = Self>
-    + std::iter::Sum
-    + std::fmt::Display {}
-impl Numeric for f32 {}
-impl Numeric for f64 {}
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Dtype { F32, F64 }
 
-fn apply<T: Numeric>(x: T, y: T, op: Op) -> T {
-    match op {
-        Op::Add => x + y,
-        Op::Sub => x - y,
-        Op::Mul => x * y,
-        Op::Div => x / y,
+impl Dtype {
+    fn name(self) -> &'static str {
+        match self {
+            Dtype::F32 => "f32",
+            Dtype::F64 => "f64",
+        }
     }
 }
 
-fn ewise_typed<T: Numeric>(av: &[T], bv: &[T], a_shape: &[usize], b_shape: &[usize], op: Op) -> (Vec<T>, Vec<usize>) {
-    if a_shape == b_shape {
-        (av.iter().zip(bv.iter()).map(|(x, y)| apply(*x, *y, op)).collect(), a_shape.to_vec())
-    } else if a_shape.is_empty() {
-        let s = av[0];
-        (bv.iter().map(|y| apply(s, *y, op)).collect(), b_shape.to_vec())
-    } else if b_shape.is_empty() {
-        let s = bv[0];
-        (av.iter().map(|x| apply(*x, s, op)).collect(), a_shape.to_vec())
-    } else {
-        die(&format!("shape mismatch: {:?} vs {:?}", a_shape, b_shape));
+fn tensor_type(shape: &[usize], dtype: Dtype) -> String {
+    let dims: String = shape.iter().map(|d| format!("{}x", d)).collect();
+    format!("tensor<{}{}>", dims, dtype.name())
+}
+
+#[derive(Debug, Clone)]
+struct Val {
+    id: usize,
+    shape: Vec<usize>,
+    dtype: Dtype,
+}
+
+struct Tracer {
+    ops: Vec<String>,
+    next_id: usize,
+    prints: Vec<Val>,
+}
+
+impl Tracer {
+    fn emit(&mut self, op: String, shape: Vec<usize>, dtype: Dtype) -> Val {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.ops.push(format!("    %{} = {}", id, op));
+        Val { id, shape, dtype }
     }
-}
 
-fn cast(t: &Tensor, dtype: &str) -> Tensor {
-    let data = match (dtype, &t.data) {
-        ("f32", TensorData::F32(_)) => t.data.clone(),
-        ("f32", TensorData::F64(v)) => TensorData::F32(v.iter().map(|&x| x as f32).collect()),
-        ("f64", TensorData::F32(v)) => TensorData::F64(v.iter().map(|&x| x as f64).collect()),
-        ("f64", TensorData::F64(_)) => t.data.clone(),
-        _ => die(&format!("unknown dtype: {}", dtype)),
-    };
-    Tensor { data, shape: t.shape.clone() }
-}
+    fn constant(&mut self, n: f64) -> Val {
+        self.emit(format!("stablehlo.constant dense<{:?}> : tensor<f64>", n), vec![], Dtype::F64)
+    }
 
-fn ewise(a: &Tensor, b: &Tensor, op: Op) -> Tensor {
-    let (a, b) = match (&a.data, &b.data) {
-        (TensorData::F32(_), TensorData::F32(_)) => (a.clone(), b.clone()),
-        (TensorData::F64(_), TensorData::F64(_)) => (a.clone(), b.clone()),
-        _ => {
-            if a.shape.is_empty() {
-                (cast(a, b.dtype()), b.clone())
-            } else if b.shape.is_empty() {
-                (a.clone(), cast(b, a.dtype()))
-            } else {
-                die(&format!("dtype mismatch: {} vs {}", a.dtype(), b.dtype()));
+    fn zero(&mut self, dtype: Dtype) -> Val {
+        self.emit(format!("stablehlo.constant dense<0.0> : {}", tensor_type(&[], dtype)), vec![], dtype)
+    }
+
+    fn convert(&mut self, v: &Val, dtype: Dtype) -> Val {
+        if v.dtype == dtype {
+            return v.clone();
+        }
+        let op = format!(
+            "stablehlo.convert %{} : ({}) -> {}",
+            v.id, tensor_type(&v.shape, v.dtype), tensor_type(&v.shape, dtype)
+        );
+        self.emit(op, v.shape.clone(), dtype)
+    }
+
+    fn broadcast(&mut self, v: &Val, shape: &[usize]) -> Val {
+        let op = format!(
+            "stablehlo.broadcast_in_dim %{}, dims = [] : ({}) -> {}",
+            v.id, tensor_type(&v.shape, v.dtype), tensor_type(shape, v.dtype)
+        );
+        self.emit(op, shape.to_vec(), v.dtype)
+    }
+
+    fn reshape(&mut self, v: &Val, shape: Vec<usize>) -> Val {
+        let op = format!(
+            "stablehlo.reshape %{} : ({}) -> {}",
+            v.id, tensor_type(&v.shape, v.dtype), tensor_type(&shape, v.dtype)
+        );
+        self.emit(op, shape, v.dtype)
+    }
+
+    fn binop(&mut self, op: Op, a: Val, b: Val) -> Val {
+        let (a, b) = if a.dtype == b.dtype {
+            (a, b)
+        } else if a.shape.is_empty() {
+            (self.convert(&a, b.dtype), b)
+        } else if b.shape.is_empty() {
+            let b = self.convert(&b, a.dtype);
+            (a, b)
+        } else {
+            die(&format!("dtype mismatch: {} vs {}", a.dtype.name(), b.dtype.name()));
+        };
+        let (a, b) = if a.shape == b.shape {
+            (a, b)
+        } else if a.shape.is_empty() {
+            (self.broadcast(&a, &b.shape.clone()), b)
+        } else if b.shape.is_empty() {
+            let b = self.broadcast(&b, &a.shape.clone());
+            (a, b)
+        } else {
+            die(&format!("shape mismatch: {:?} vs {:?}", a.shape, b.shape));
+        };
+        let name = match op {
+            Op::Add => "add",
+            Op::Sub => "subtract",
+            Op::Mul => "multiply",
+            Op::Div => "divide",
+        };
+        let text = format!("stablehlo.{} %{}, %{} : {}", name, a.id, b.id, tensor_type(&a.shape, a.dtype));
+        let (shape, dtype) = (a.shape, a.dtype);
+        self.emit(text, shape, dtype)
+    }
+
+    fn sum(&mut self, v: &Val) -> Val {
+        if v.shape.is_empty() {
+            return v.clone();
+        }
+        let init = self.zero(v.dtype);
+        let dims: Vec<String> = (0..v.shape.len()).map(|d| d.to_string()).collect();
+        let op = format!(
+            "stablehlo.reduce(%{} init: %{}) applies stablehlo.add across dimensions = [{}] : ({}, {}) -> {}",
+            v.id,
+            init.id,
+            dims.join(", "),
+            tensor_type(&v.shape, v.dtype),
+            tensor_type(&[], v.dtype),
+            tensor_type(&[], v.dtype)
+        );
+        self.emit(op, vec![], v.dtype)
+    }
+
+    fn stack(&mut self, vals: Vec<Val>) -> Val {
+        let inner_shape = vals[0].shape.clone();
+        let dtype = vals[0].dtype;
+        for v in &vals[1..] {
+            if v.shape != inner_shape {
+                die(&format!("array literal has inconsistent shapes: {:?} vs {:?}", inner_shape, v.shape));
+            }
+            if v.dtype != dtype {
+                die(&format!("array literal has inconsistent dtypes: {} vs {}", dtype.name(), v.dtype.name()));
             }
         }
-    };
-    match (&a.data, &b.data) {
-        (TensorData::F32(av), TensorData::F32(bv)) => {
-            let (data, shape) = ewise_typed(av, bv, &a.shape, &b.shape, op);
-            Tensor { data: TensorData::F32(data), shape }
+        let mut row_shape = vec![1];
+        row_shape.extend(&inner_shape);
+        let rows: Vec<Val> = vals.iter().map(|v| self.reshape(v, row_shape.clone())).collect();
+        if rows.len() == 1 {
+            return rows.into_iter().next().unwrap();
         }
-        (TensorData::F64(av), TensorData::F64(bv)) => {
-            let (data, shape) = ewise_typed(av, bv, &a.shape, &b.shape, op);
-            Tensor { data: TensorData::F64(data), shape }
-        }
-        _ => unreachable!(),
+        let mut shape = vec![rows.len()];
+        shape.extend(&inner_shape);
+        let operands: Vec<String> = rows.iter().map(|r| format!("%{}", r.id)).collect();
+        let in_types: Vec<String> = rows.iter().map(|_| tensor_type(&row_shape, dtype)).collect();
+        let op = format!(
+            "stablehlo.concatenate {}, dim = 0 : ({}) -> {}",
+            operands.join(", "),
+            in_types.join(", "),
+            tensor_type(&shape, dtype)
+        );
+        self.emit(op, shape, dtype)
     }
-}
 
-fn sum_tensor(t: &Tensor) -> Tensor {
-    match &t.data {
-        TensorData::F32(v) => {
-            let s: f32 = v.iter().copied().sum();
-            Tensor { data: TensorData::F32(vec![s]), shape: vec![] }
-        }
-        TensorData::F64(v) => {
-            let s: f64 = v.iter().copied().sum();
-            Tensor { data: TensorData::F64(vec![s]), shape: vec![] }
-        }
-    }
-}
-
-fn eval_arr(elems: &[Expr], env: &HashMap<String, Tensor>, fns: &HashMap<String, Decl>) -> Tensor {
-    if elems.is_empty() {
-        die("empty array literal");
-    }
-    let vals: Vec<Tensor> = elems.iter().map(|e| eval(e, env, fns)).collect();
-    let inner_shape = vals[0].shape.clone();
-    let inner_dtype = vals[0].dtype();
-    for v in &vals[1..] {
-        if v.shape != inner_shape {
-            die(&format!("array literal has inconsistent shapes: {:?} vs {:?}", inner_shape, v.shape));
-        }
-        if v.dtype() != inner_dtype {
-            die(&format!("array literal has inconsistent dtypes: {} vs {}", inner_dtype, v.dtype()));
-        }
-    }
-    let mut shape = vec![vals.len()];
-    shape.extend(&inner_shape);
-    match inner_dtype {
-        "f32" => {
-            let mut data = Vec::new();
-            for v in &vals {
-                if let TensorData::F32(d) = &v.data { data.extend(d); }
-            }
-            Tensor { data: TensorData::F32(data), shape }
-        }
-        "f64" => {
-            let mut data = Vec::new();
-            for v in &vals {
-                if let TensorData::F64(d) = &v.data { data.extend(d); }
-            }
-            Tensor { data: TensorData::F64(data), shape }
-        }
-        _ => unreachable!(),
-    }
-}
-
-fn eval(e: &Expr, env: &HashMap<String, Tensor>, fns: &HashMap<String, Decl>) -> Tensor {
-    match e {
-        Expr::Num(n) => Tensor { data: TensorData::F64(vec![*n]), shape: vec![] },
-        Expr::Arr(elems) => eval_arr(elems, env, fns),
-        Expr::Var(s) => {
-            if let Some(v) = env.get(s) {
-                v.clone()
-            } else if fns.contains_key(s) {
-                die(&format!("'{}' is a function; first-class functions aren't supported yet", s));
-            } else {
-                die(&format!("undefined: {}", s));
-            }
-        }
-        Expr::Bin(op, l, r) => {
-            let l = eval(l, env, fns);
-            let r = eval(r, env, fns);
-            ewise(&l, &r, *op)
-        }
-        Expr::Let(name, value, body) => {
-            let v = eval(value, env, fns);
-            let mut env2 = env.clone();
-            env2.insert(name.clone(), v);
-            eval(body, &env2, fns)
-        }
-        Expr::Seq(first, rest) => {
-            eval(first, env, fns);
-            eval(rest, env, fns)
-        }
-        Expr::Call(name, args) => {
-            if let Some(decl) = fns.get(name) {
-                if decl.params.len() != args.len() {
-                    die(&format!("arity mismatch: {} expects {} args, got {}",
-                                 name, decl.params.len(), args.len()));
+    fn trace(&mut self, e: &Expr, env: &HashMap<String, Val>, fns: &HashMap<String, Decl>) -> Val {
+        match e {
+            Expr::Num(n) => self.constant(*n),
+            Expr::Arr(elems) => {
+                if elems.is_empty() {
+                    die("empty array literal");
                 }
-                let mut env2 = HashMap::new();
-                for (param, arg) in decl.params.iter().zip(args.iter()) {
-                    env2.insert(param.clone(), eval(arg, env, fns));
-                }
-                eval(&decl.body, &env2, fns)
-            } else {
-                call_builtin(name, args, env, fns)
+                let vals: Vec<Val> = elems.iter().map(|el| self.trace(el, env, fns)).collect();
+                self.stack(vals)
             }
+            Expr::Var(s) => {
+                if let Some(v) = env.get(s) {
+                    v.clone()
+                } else if fns.contains_key(s) {
+                    die(&format!("'{}' is a function; first-class functions aren't supported yet", s));
+                } else {
+                    die(&format!("undefined: {}", s));
+                }
+            }
+            Expr::Bin(op, l, r) => {
+                let l = self.trace(l, env, fns);
+                let r = self.trace(r, env, fns);
+                self.binop(*op, l, r)
+            }
+            Expr::Let(name, value, body) => {
+                let v = self.trace(value, env, fns);
+                let mut env2 = env.clone();
+                env2.insert(name.clone(), v);
+                self.trace(body, &env2, fns)
+            }
+            Expr::Seq(first, rest) => {
+                self.trace(first, env, fns);
+                self.trace(rest, env, fns)
+            }
+            Expr::Call(name, args) => {
+                if let Some(decl) = fns.get(name) {
+                    if decl.params.len() != args.len() {
+                        die(&format!("arity mismatch: {} expects {} args, got {}",
+                                     name, decl.params.len(), args.len()));
+                    }
+                    let mut env2 = HashMap::new();
+                    for (param, arg) in decl.params.iter().zip(args.iter()) {
+                        env2.insert(param.clone(), self.trace(arg, env, fns));
+                    }
+                    self.trace(&decl.body, &env2, fns)
+                } else {
+                    self.builtin(name, args, env, fns)
+                }
+            }
+        }
+    }
+
+    fn builtin(&mut self, name: &str, args: &[Expr], env: &HashMap<String, Val>, fns: &HashMap<String, Decl>) -> Val {
+        match name {
+            "sum" => {
+                if args.len() != 1 {
+                    die(&format!("sum expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns);
+                self.sum(&v)
+            }
+            "print" => {
+                if args.len() != 1 {
+                    die(&format!("print expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns);
+                self.prints.push(v.clone());
+                v
+            }
+            "f32" => {
+                if args.len() != 1 {
+                    die(&format!("f32 expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns);
+                self.convert(&v, Dtype::F32)
+            }
+            "f64" => {
+                if args.len() != 1 {
+                    die(&format!("f64 expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns);
+                self.convert(&v, Dtype::F64)
+            }
+            _ => die(&format!("undefined function: {}", name)),
         }
     }
 }
 
-fn call_builtin(name: &str, args: &[Expr], env: &HashMap<String, Tensor>, fns: &HashMap<String, Decl>) -> Tensor {
-    match name {
-        "sum" => {
-            if args.len() != 1 {
-                die(&format!("sum expects 1 arg, got {}", args.len()));
-            }
-            let t = eval(&args[0], env, fns);
-            sum_tensor(&t)
-        }
-        "print" => {
-            if args.len() != 1 {
-                die(&format!("print expects 1 arg, got {}", args.len()));
-            }
-            let t = eval(&args[0], env, fns);
-            println!("{}", format_tensor(&t));
-            t
-        }
-        "f32" | "f64" => {
-            if args.len() != 1 {
-                die(&format!("{} expects 1 arg, got {}", name, args.len()));
-            }
-            let t = eval(&args[0], env, fns);
-            cast(&t, name)
-        }
-        _ => die(&format!("undefined function: {}", name)),
+fn build_module(tracer: &Tracer, outputs: &[Val]) -> String {
+    let types: Vec<String> = outputs.iter().map(|v| tensor_type(&v.shape, v.dtype)).collect();
+    let names: Vec<String> = outputs.iter().map(|v| format!("%{}", v.id)).collect();
+    let mut s = String::new();
+    s.push_str("module {\n");
+    s.push_str(&format!("  func.func @main() -> ({}) {{\n", types.join(", ")));
+    for op in &tracer.ops {
+        s.push_str(op);
+        s.push('\n');
     }
+    s.push_str(&format!("    return {} : {}\n", names.join(", "), types.join(", ")));
+    s.push_str("  }\n}\n");
+    s
+}
+
+#[derive(Debug, Clone)]
+enum TensorData {
+    F32(Vec<f32>),
+    F64(Vec<f64>),
+}
+
+#[derive(Debug, Clone)]
+struct Tensor {
+    data: TensorData,
+    shape: Vec<usize>,
+}
+
+impl Tensor {
+    fn dtype(&self) -> &'static str {
+        match &self.data {
+            TensorData::F32(_) => "f32",
+            TensorData::F64(_) => "f64",
+        }
+    }
+}
+
+fn host_tensor(h: HostBuffer) -> Tensor {
+    let shape: Vec<usize> = h.dims().iter().map(|&d| d as usize).collect();
+    match h {
+        HostBuffer::F32(b) => Tensor { data: TensorData::F32(b.data().to_vec()), shape },
+        HostBuffer::F64(b) => Tensor { data: TensorData::F64(b.data().to_vec()), shape },
+        _ => die("unexpected output dtype from XLA"),
+    }
+}
+
+fn execute(mlir: &str) -> Vec<Tensor> {
+    let plugin_path = env::var("PJRT_PLUGIN_PATH")
+        .unwrap_or_else(|_| "plugins/libpjrt_cpu.dylib".to_string());
+    let api = pjrt::plugin(&plugin_path)
+        .load()
+        .unwrap_or_else(|e| die(&format!("cannot load PJRT plugin at {}: {}", plugin_path, e)));
+    let client = Client::builder(&api)
+        .build()
+        .unwrap_or_else(|e| die(&format!("cannot create PJRT client: {}", e)));
+    let program = pjrt::Program::new(MLIR, mlir.as_bytes());
+    let executable = LoadedExecutable::builder(&client, &program)
+        .build()
+        .unwrap_or_else(|e| die(&format!("XLA compilation failed: {}", e)));
+    let results = executable
+        .execution(())
+        .run_sync()
+        .unwrap_or_else(|e| die(&format!("execution failed: {}", e)));
+    results[0]
+        .iter()
+        .map(|b| {
+            let h = b.to_host_sync(None)
+                .unwrap_or_else(|e| die(&format!("device-to-host transfer failed: {}", e)));
+            host_tensor(h)
+        })
+        .collect()
 }
 
 fn format_typed<T: std::fmt::Display>(data: &[T], shape: &[usize]) -> String {
@@ -557,6 +657,12 @@ fn main() {
     let lexed = lex(&src);
     let mut p = Parser { toks: lexed.toks, cols: lexed.cols, lines: lexed.lines, pos: 0 };
     let prog = p.program();
-    let result = eval(&prog.main, &HashMap::new(), &prog.fns);
-    println!("{}", format_tensor(&result));
+    let mut tracer = Tracer { ops: Vec::new(), next_id: 0, prints: Vec::new() };
+    let result = tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
+    let mut outputs = tracer.prints.clone();
+    outputs.push(result);
+    let module = build_module(&tracer, &outputs);
+    for tensor in execute(&module) {
+        println!("{}", format_tensor(&tensor));
+    }
 }
