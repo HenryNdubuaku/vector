@@ -12,7 +12,14 @@ enum Tok {
     Str(String),
     Ident(String),
     Fn,
+    For,
+    In,
+    DotDot,
     Eq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
     Plus,
     Minus,
     Star,
@@ -72,6 +79,32 @@ fn lex(src: &str) -> Lexed {
             ',' => { i += 1; col += 1; push(Tok::Comma, tl, tc, &mut toks, &mut lines, &mut cols); }
             ':' => { i += 1; col += 1; push(Tok::Colon, tl, tc, &mut toks, &mut lines, &mut cols); }
             '=' => { i += 1; col += 1; push(Tok::Eq, tl, tc, &mut toks, &mut lines, &mut cols); }
+            '<' => {
+                i += 1; col += 1;
+                if chars.get(i) == Some(&'=') {
+                    i += 1; col += 1;
+                    push(Tok::Le, tl, tc, &mut toks, &mut lines, &mut cols);
+                } else {
+                    push(Tok::Lt, tl, tc, &mut toks, &mut lines, &mut cols);
+                }
+            }
+            '>' => {
+                i += 1; col += 1;
+                if chars.get(i) == Some(&'=') {
+                    i += 1; col += 1;
+                    push(Tok::Ge, tl, tc, &mut toks, &mut lines, &mut cols);
+                } else {
+                    push(Tok::Gt, tl, tc, &mut toks, &mut lines, &mut cols);
+                }
+            }
+            '.' => {
+                if chars.get(i + 1) == Some(&'.') {
+                    i += 2; col += 2;
+                    push(Tok::DotDot, tl, tc, &mut toks, &mut lines, &mut cols);
+                } else {
+                    die("unexpected character: .");
+                }
+            }
             '"' => {
                 i += 1; col += 1;
                 let mut s = String::new();
@@ -86,7 +119,9 @@ fn lex(src: &str) -> Lexed {
             }
             c if c.is_ascii_digit() => {
                 let mut s = String::new();
-                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                while i < chars.len()
+                    && (chars[i].is_ascii_digit()
+                        || (chars[i] == '.' && chars.get(i + 1) != Some(&'.'))) {
                     s.push(chars[i]); i += 1; col += 1;
                 }
                 push(Tok::Num(s.parse().unwrap()), tl, tc, &mut toks, &mut lines, &mut cols);
@@ -98,6 +133,8 @@ fn lex(src: &str) -> Lexed {
                 }
                 let t = match s.as_str() {
                     "fn" => Tok::Fn,
+                    "for" => Tok::For,
+                    "in" => Tok::In,
                     _ => Tok::Ident(s),
                 };
                 push(t, tl, tc, &mut toks, &mut lines, &mut cols);
@@ -116,7 +153,9 @@ enum Expr {
     Var(String),
     Neg(Box<Expr>),
     Bin(Op, Box<Expr>, Box<Expr>),
+    Cmp(String, Box<Expr>, Box<Expr>),
     Let(String, Box<Expr>, Box<Expr>),
+    For(String, usize, usize, Vec<(Option<String>, Expr)>, Box<Expr>),
     Call(String, Vec<Expr>),
     Seq(Box<Expr>, Box<Expr>),
 }
@@ -219,11 +258,14 @@ impl Parser {
     }
 
     fn body(&mut self, indent: usize) -> Expr {
+        if matches!(self.peek(), Some(Tok::For)) {
+            return self.for_loop(indent);
+        }
         if let Some(Tok::Ident(_)) = self.peek() {
             if matches!(self.toks.get(self.pos + 1), Some(Tok::Eq)) {
                 let name = self.ident("binding name");
                 self.bump();
-                let value = self.add_sub();
+                let value = self.expr();
                 if self.body_continues(indent) {
                     let rest = self.body(indent);
                     return Expr::Let(name, Box::new(value), Box::new(rest));
@@ -231,13 +273,69 @@ impl Parser {
                 die(&format!("binding {} has no body expression", name));
             }
         }
-        let e = self.add_sub();
+        let e = self.expr();
         if self.body_continues(indent) {
             let rest = self.body(indent);
             Expr::Seq(Box::new(e), Box::new(rest))
         } else {
             e
         }
+    }
+
+    fn int(&mut self, what: &str) -> usize {
+        match self.bump() {
+            Some(Tok::Num(n)) if n.fract() == 0.0 && n >= 0.0 => n as usize,
+            t => die(&format!("expected {} (integer literal), got {:?}", what, t)),
+        }
+    }
+
+    fn for_loop(&mut self, indent: usize) -> Expr {
+        let for_col = self.peek_col().unwrap();
+        self.bump();
+        let var = self.ident("loop variable");
+        self.expect(Tok::In, "'in' after loop variable");
+        let start = self.int("range start");
+        self.expect(Tok::DotDot, "'..' in range");
+        let end = self.int("range end");
+        self.expect(Tok::Colon, "':' after range");
+        let body_col = self.peek_col().unwrap_or(0);
+        if body_col <= for_col {
+            die("for body must be indented past 'for'");
+        }
+        let mut stmts = Vec::new();
+        loop {
+            if let Some(Tok::Ident(_)) = self.peek() {
+                if matches!(self.toks.get(self.pos + 1), Some(Tok::Eq)) {
+                    let name = self.ident("binding name");
+                    self.bump();
+                    stmts.push((Some(name), self.expr()));
+                    if self.body_continues(body_col) { continue; }
+                    break;
+                }
+            }
+            stmts.push((None, self.expr()));
+            if self.body_continues(body_col) { continue; }
+            break;
+        }
+        if !self.body_continues(indent) {
+            die("for loop must be followed by an expression");
+        }
+        let rest = self.body(indent);
+        Expr::For(var, start, end, stmts, Box::new(rest))
+    }
+
+    fn expr(&mut self) -> Expr {
+        let lhs = self.add_sub();
+        let dir = match self.peek() {
+            Some(Tok::Lt) => "LT",
+            Some(Tok::Gt) => "GT",
+            Some(Tok::Le) => "LE",
+            Some(Tok::Ge) => "GE",
+            _ => return lhs,
+        };
+        self.bump();
+        let rhs = self.add_sub();
+        Expr::Cmp(dir.to_string(), Box::new(lhs), Box::new(rhs))
     }
 
     fn body_continues(&self, indent: usize) -> bool {
@@ -305,10 +403,10 @@ impl Parser {
                     self.bump();
                     let mut args = Vec::new();
                     if !matches!(self.peek(), Some(Tok::RParen)) {
-                        args.push(self.add_sub());
+                        args.push(self.expr());
                         while matches!(self.peek(), Some(Tok::Comma)) {
                             self.bump();
-                            args.push(self.add_sub());
+                            args.push(self.expr());
                         }
                     }
                     self.expect(Tok::RParen, "')' or ','");
@@ -318,17 +416,17 @@ impl Parser {
                 }
             }
             Some(Tok::LParen) => {
-                let e = self.add_sub();
+                let e = self.expr();
                 self.expect(Tok::RParen, "')'");
                 e
             }
             Some(Tok::LBracket) => {
                 let mut elems = Vec::new();
                 if !matches!(self.peek(), Some(Tok::RBracket)) {
-                    elems.push(self.add_sub());
+                    elems.push(self.expr());
                     while matches!(self.peek(), Some(Tok::Comma)) {
                         self.bump();
-                        elems.push(self.add_sub());
+                        elems.push(self.expr());
                     }
                 }
                 self.expect(Tok::RBracket, "']' or ','");
@@ -370,6 +468,7 @@ fn join_main(a: Expr, b: Expr) -> Expr {
     match a {
         Expr::Let(name, value, body) => Expr::Let(name, value, Box::new(join_main(*body, b))),
         Expr::Seq(first, rest) => Expr::Seq(first, Box::new(join_main(*rest, b))),
+        Expr::For(var, start, end, stmts, rest) => Expr::For(var, start, end, stmts, Box::new(join_main(*rest, b))),
         other => Expr::Seq(Box::new(other), Box::new(b)),
     }
 }
@@ -400,6 +499,18 @@ struct BVal {
 
 fn per_shape(v: &BVal) -> Vec<usize> {
     v.val.shape[v.bdims..].to_vec()
+}
+
+fn broadcast_shape(a: &[usize], b: &[usize]) -> Vec<usize> {
+    if a == b {
+        a.to_vec()
+    } else if a.len() <= b.len() && b.ends_with(a) {
+        b.to_vec()
+    } else if b.len() < a.len() && a.ends_with(b) {
+        a.to_vec()
+    } else {
+        die(&format!("shape mismatch: {:?} vs {:?} (broadcast aligns trailing dims)", a, b));
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -764,10 +875,7 @@ impl Tracer {
         deep.val.shape[..deep.bdims].to_vec()
     }
 
-    fn bewise(&mut self, name: &str, a: BVal, b: BVal) -> BVal {
-        if a.bdims == 0 && b.bdims == 0 {
-            return BVal { val: self.ewise(name, a.val, b.val), bdims: 0 };
-        }
+    fn balign(&mut self, a: BVal, b: BVal) -> (Val, Val, Vec<usize>, Vec<usize>) {
         let (a, b) = if a.val.dtype == b.val.dtype {
             (a, b)
         } else if per_shape(&a).is_empty() {
@@ -779,24 +887,33 @@ impl Tracer {
         } else {
             die(&format!("dtype mismatch: {} vs {}", a.val.dtype.name(), b.val.dtype.name()));
         };
-        let pa = per_shape(&a);
-        let pb = per_shape(&b);
-        let per: Vec<usize> = if pa == pb {
-            pa
-        } else if pa.len() <= pb.len() && pb.ends_with(&pa) {
-            pb
-        } else if pb.len() < pa.len() && pa.ends_with(&pb) {
-            pa
-        } else {
-            die(&format!("shape mismatch: {:?} vs {:?} (broadcast aligns trailing dims)", pa, pb));
-        };
+        let per = broadcast_shape(&per_shape(&a), &per_shape(&b));
         let prefix = Self::batch_prefix(&a, &b);
         let av = self.align(&a, &prefix, &per);
         let bv = self.align(&b, &prefix, &per);
+        (av, bv, prefix, per)
+    }
+
+    fn bewise(&mut self, name: &str, a: BVal, b: BVal) -> BVal {
+        if a.val.dtype == Dtype::I1 || b.val.dtype == Dtype::I1 {
+            die(&format!("arithmetic on booleans: {}", name));
+        }
+        let (av, bv, prefix, per) = self.balign(a, b);
         let mut shape = prefix.clone();
         shape.extend(&per);
         let dtype = av.dtype;
         let val = self.emit(OpKind::Ewise(name.to_string()), vec![av.id, bv.id], shape, dtype);
+        BVal { val, bdims: prefix.len() }
+    }
+
+    fn bcompare(&mut self, dir: &str, a: BVal, b: BVal) -> BVal {
+        if a.val.dtype == Dtype::I1 || b.val.dtype == Dtype::I1 {
+            die("cannot compare booleans");
+        }
+        let (av, bv, prefix, per) = self.balign(a, b);
+        let mut shape = prefix.clone();
+        shape.extend(&per);
+        let val = self.emit(OpKind::Compare(dir.to_string()), vec![av.id, bv.id], shape, Dtype::I1);
         BVal { val, bdims: prefix.len() }
     }
 
@@ -906,6 +1023,29 @@ impl Tracer {
                 let r = self.trace(r, env, fns);
                 self.binop(*op, l, r)
             }
+            Expr::Cmp(dir, l, r) => {
+                let l = self.trace(l, env, fns);
+                let r = self.trace(r, env, fns);
+                self.bcompare(dir, l, r)
+            }
+            Expr::For(var, start, end, stmts, rest) => {
+                let mut env2 = env.clone();
+                for k in *start..*end {
+                    let kv = self.constant(k as f64, Dtype::F64);
+                    env2.insert(var.clone(), BVal { val: kv, bdims: 0 });
+                    for (name, stmt) in stmts {
+                        let v = self.trace(stmt, &env2, fns);
+                        if let Some(name) = name {
+                            env2.insert(name.clone(), v);
+                        }
+                    }
+                }
+                match env.get(var) {
+                    Some(orig) => env2.insert(var.clone(), orig.clone()),
+                    None => env2.remove(var),
+                };
+                self.trace(rest, &env2, fns)
+            }
             Expr::Let(name, value, body) => {
                 let v = self.trace(value, env, fns);
                 let mut env2 = env.clone();
@@ -962,8 +1102,47 @@ impl Tracer {
                     die(&format!("print expects 1 arg, got {}", args.len()));
                 }
                 let v = self.trace(&args[0], env, fns);
+                if v.val.dtype == Dtype::I1 {
+                    die("cannot print booleans; use where to select values");
+                }
                 self.prints.push(v.val.clone());
                 v
+            }
+            "where" => {
+                if args.len() != 3 {
+                    die(&format!("where expects 3 args (condition, then, else), got {}", args.len()));
+                }
+                let c = self.trace(&args[0], env, fns);
+                if c.val.dtype != Dtype::I1 {
+                    die("where condition must be a comparison");
+                }
+                let a = self.trace(&args[1], env, fns);
+                let b = self.trace(&args[2], env, fns);
+                if a.val.dtype == Dtype::I1 || b.val.dtype == Dtype::I1 {
+                    die("where branches cannot be booleans");
+                }
+                let per = broadcast_shape(&broadcast_shape(&per_shape(&a), &per_shape(&b)), &per_shape(&c));
+                let deepest = [&a, &b, &c].into_iter().max_by_key(|v| v.bdims).unwrap();
+                let prefix: Vec<usize> = deepest.val.shape[..deepest.bdims].to_vec();
+                let cv = self.align(&c, &prefix, &per);
+                let (a, b) = if a.val.dtype == b.val.dtype {
+                    (a, b)
+                } else if per_shape(&a).is_empty() {
+                    let av = self.convert(&a.val, b.val.dtype);
+                    (BVal { val: av, bdims: a.bdims }, b)
+                } else if per_shape(&b).is_empty() {
+                    let bv = self.convert(&b.val, a.val.dtype);
+                    (a, BVal { val: bv, bdims: b.bdims })
+                } else {
+                    die(&format!("dtype mismatch: {} vs {}", a.val.dtype.name(), b.val.dtype.name()));
+                };
+                let av = self.align(&a, &prefix, &per);
+                let bv = self.align(&b, &prefix, &per);
+                let mut shape = prefix.clone();
+                shape.extend(&per);
+                let dtype = av.dtype;
+                let val = self.emit(OpKind::Select, vec![cv.id, av.id, bv.id], shape, dtype);
+                BVal { val, bdims: prefix.len() }
             }
             "f32" | "f64" => {
                 if args.len() != 1 {

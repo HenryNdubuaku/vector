@@ -15,20 +15,24 @@ Building from source requires `protoc` (`brew install protobuf`). `vector setup`
 
 ## Use
 
-```vec
--- train.vec
-xs = load("xs.npy")
+```python
+fn loss(w):
+  ys = load("ys.npy")
+  d = w - ys
+  mean(d * d)
 
-fn norm_sq(v):
-  sum(v * v)
-
-print(vmap(norm_sq, xs))
-print(grad(norm_sq, f64([3.0, 4.0])))
+w = [0.0, 0.0]
+for step in 0..100:
+  w = w - 0.1 * grad(loss, w)
+print(w)
+print(loss(w))
 ```
 
 ```sh
-vector run train.vec
-vector build train.vec > train.mlir
+vector run filename.vec
+vector build filename.vec > filename.mlir
 ```
 
-`load` reads `.npy` files (little-endian f32/f64, C order); the tensor becomes a runtime input to the compiled program, so shapes stay static. Output comes only from `print`. Transforms: `grad`, `vmap` (nestable), `jacobian`.
+`load` reads `.npy` files (little-endian f32/f64, C order); the tensor becomes a runtime input to the compiled program, so shapes stay static. 
+Output comes only from `print`. Transforms: `grad`, `vmap` (nestable), `jacobian`. 
+Loops (`for i in 0..n:`) unroll at trace time, so gradients flow through them; `where(cond, a, b)` selects elementwise with comparisons `< > <= >=`.

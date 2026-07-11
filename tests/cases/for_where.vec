@@ -1,0 +1,27 @@
+w = 1.0
+for i in 0..4:
+  w = w * 2.0
+print(w)
+
+acc = 0.0
+for i in 0..5:
+  acc = acc + i
+print(acc)
+
+fn sq_loss(v):
+  d = v - 3.0
+  sum(d * d)
+
+v = 0.0
+for i in 0..20:
+  v = v - 0.5 * grad(sq_loss, v)
+print(v)
+
+x = [-1.0, 0.5, 2.0]
+print(where(x > 0.0, x, 0.0))
+print(where(x < 1.0, 1.0, -1.0))
+
+fn hinge_like(h):
+  sum(where(h > 0.0, h, h * 0.0))
+
+print(grad(hinge_like, [2.0, -3.0]))
