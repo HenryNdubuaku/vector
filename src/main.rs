@@ -447,9 +447,13 @@ impl Tracer {
         self.emit(OpKind::Select, vec![pred.id, on_true.id, on_false.id], on_true.shape.clone(), on_true.dtype)
     }
 
+    fn zeros(&mut self, shape: &[usize], dtype: Dtype) -> Val {
+        let zero = self.constant(0.0, dtype);
+        if shape.is_empty() { zero } else { self.broadcast(&zero, shape) }
+    }
+
     fn zeros_like(&mut self, v: &Val) -> Val {
-        let zero = self.constant(0.0, v.dtype);
-        if v.shape.is_empty() { zero } else { self.broadcast(&zero, &v.shape.clone()) }
+        self.zeros(&v.shape.clone(), v.dtype)
     }
 
     fn backward(&mut self, y: &Val, x: &Val) -> Val {
@@ -563,7 +567,27 @@ impl Tracer {
                 let df = self.select(&ins[0], &zero, g);
                 vec![(ins[1].id, dt), (ins[2].id, df)]
             }
-            OpKind::Slice(_, _) => die("no gradient rule for slice (higher-order grad through array literals isn't supported yet)"),
+            OpKind::Slice(start, limit) => {
+                let in_shape = ins[0].shape.clone();
+                let mut parts = Vec::new();
+                if *start > 0 {
+                    let mut shape = vec![*start];
+                    shape.extend(&in_shape[1..]);
+                    parts.push(self.zeros(&shape, g.dtype).id);
+                }
+                parts.push(g.id);
+                if *limit < in_shape[0] {
+                    let mut shape = vec![in_shape[0] - *limit];
+                    shape.extend(&in_shape[1..]);
+                    parts.push(self.zeros(&shape, g.dtype).id);
+                }
+                let da = if parts.len() == 1 {
+                    g.clone()
+                } else {
+                    self.emit(OpKind::Concat, parts, in_shape, g.dtype)
+                };
+                vec![(ins[0].id, da)]
+            }
         }
     }
 

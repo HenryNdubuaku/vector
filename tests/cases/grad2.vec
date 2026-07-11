@@ -1,0 +1,35 @@
+fn sq(x):
+  sum(x * x)
+
+fn dsq(x):
+  grad(sq, x)
+
+print(grad(dsq, 3.0))
+
+fn stacked(x):
+  sum([x, x] * [2.0, 3.0])
+
+fn dstacked(x):
+  grad(stacked, x)
+
+print(grad(dstacked, 5.0))
+
+fn cube(x):
+  sum(x * x * x)
+
+fn dcube(x):
+  grad(cube, x)
+
+fn ddcube(x):
+  grad(dcube, x)
+
+print(grad(dcube, 2.0))
+print(grad(ddcube, 2.0))
+
+fn growth(x):
+  sum(exp(x))
+
+fn dgrowth(x):
+  grad(growth, x)
+
+print(grad(dgrowth, 0.0))
