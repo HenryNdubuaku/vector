@@ -4,11 +4,12 @@ use std::fs;
 use std::process::{exit, Command};
 
 use pjrt::ProgramFormat::MLIR;
-use pjrt::{Client, HostBuffer, LoadedExecutable};
+use pjrt::{Buffer, Client, HostBuffer, LoadedExecutable};
 
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {
     Num(f64),
+    Str(String),
     Ident(String),
     Fn,
     Eq,
@@ -71,6 +72,18 @@ fn lex(src: &str) -> Lexed {
             ',' => { i += 1; col += 1; push(Tok::Comma, tl, tc, &mut toks, &mut lines, &mut cols); }
             ':' => { i += 1; col += 1; push(Tok::Colon, tl, tc, &mut toks, &mut lines, &mut cols); }
             '=' => { i += 1; col += 1; push(Tok::Eq, tl, tc, &mut toks, &mut lines, &mut cols); }
+            '"' => {
+                i += 1; col += 1;
+                let mut s = String::new();
+                while i < chars.len() && chars[i] != '"' && chars[i] != '\n' {
+                    s.push(chars[i]); i += 1; col += 1;
+                }
+                if i >= chars.len() || chars[i] != '"' {
+                    die("unterminated string literal");
+                }
+                i += 1; col += 1;
+                push(Tok::Str(s), tl, tc, &mut toks, &mut lines, &mut cols);
+            }
             c if c.is_ascii_digit() => {
                 let mut s = String::new();
                 while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
@@ -98,6 +111,7 @@ fn lex(src: &str) -> Lexed {
 #[derive(Debug)]
 enum Expr {
     Num(f64),
+    Str(String),
     Arr(Vec<Expr>),
     Var(String),
     Neg(Box<Expr>),
@@ -177,7 +191,7 @@ impl Parser {
             }
         }
         let main = mains.into_iter()
-            .reduce(|a, b| Expr::Seq(Box::new(a), Box::new(b)))
+            .reduce(join_main)
             .unwrap_or_else(|| die("program has no expressions"));
         Program { fns, main }
     }
@@ -285,6 +299,7 @@ impl Parser {
     fn atom(&mut self) -> Expr {
         match self.bump() {
             Some(Tok::Num(n)) => Expr::Num(n),
+            Some(Tok::Str(s)) => Expr::Str(s),
             Some(Tok::Ident(s)) => {
                 if matches!(self.peek(), Some(Tok::LParen)) {
                     self.bump();
@@ -351,6 +366,14 @@ fn mlir_float(n: f64) -> String {
     }
 }
 
+fn join_main(a: Expr, b: Expr) -> Expr {
+    match a {
+        Expr::Let(name, value, body) => Expr::Let(name, value, Box::new(join_main(*body, b))),
+        Expr::Seq(first, rest) => Expr::Seq(first, Box::new(join_main(*rest, b))),
+        other => Expr::Seq(Box::new(other), Box::new(b)),
+    }
+}
+
 fn axis_arg(e: &Expr, shape: &[usize]) -> usize {
     let n = match e {
         Expr::Num(n) => *n,
@@ -381,6 +404,7 @@ fn per_shape(v: &BVal) -> Vec<usize> {
 
 #[derive(Debug, Clone)]
 enum OpKind {
+    Input,
     Constant(f64),
     Ewise(String),
     Unary(String),
@@ -406,6 +430,65 @@ struct Node {
 struct Tracer {
     nodes: Vec<Node>,
     prints: Vec<Val>,
+    inputs: Vec<(String, usize)>,
+}
+
+fn npy_meta(path: &str) -> (Vec<usize>, Dtype, usize) {
+    use std::io::Read;
+    let mut f = fs::File::open(path)
+        .unwrap_or_else(|e| die(&format!("cannot open {}: {}", path, e)));
+    let mut intro = [0u8; 8];
+    f.read_exact(&mut intro)
+        .unwrap_or_else(|e| die(&format!("cannot read {}: {}", path, e)));
+    if &intro[0..6] != b"\x93NUMPY" {
+        die(&format!("{} is not a .npy file", path));
+    }
+    let header_len = match intro[6] {
+        1 => {
+            let mut b = [0u8; 2];
+            f.read_exact(&mut b).unwrap_or_else(|e| die(&format!("cannot read {}: {}", path, e)));
+            u16::from_le_bytes(b) as usize
+        }
+        2 => {
+            let mut b = [0u8; 4];
+            f.read_exact(&mut b).unwrap_or_else(|e| die(&format!("cannot read {}: {}", path, e)));
+            u32::from_le_bytes(b) as usize
+        }
+        v => die(&format!("unsupported .npy version {} in {}", v, path)),
+    };
+    let mut header = vec![0u8; header_len];
+    f.read_exact(&mut header)
+        .unwrap_or_else(|e| die(&format!("cannot read {}: {}", path, e)));
+    let header = String::from_utf8_lossy(&header).to_string();
+    let dtype = if header.contains("'<f4'") {
+        Dtype::F32
+    } else if header.contains("'<f8'") {
+        Dtype::F64
+    } else {
+        die(&format!("unsupported dtype in {} (need little-endian f32/f64): {}", path, header.trim()));
+    };
+    if !header.contains("'fortran_order': False") {
+        die(&format!("{} is fortran-ordered; only C order is supported", path));
+    }
+    let open = header.find('(')
+        .unwrap_or_else(|| die(&format!("malformed .npy header in {}: {}", path, header.trim())));
+    let close = header[open..].find(')')
+        .unwrap_or_else(|| die(&format!("malformed .npy header in {}: {}", path, header.trim())));
+    let shape: Vec<usize> = header[open + 1..open + close]
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse().unwrap_or_else(|_| die(&format!("malformed shape in {}: {}", path, header.trim()))))
+        .collect();
+    let data_offset = 8 + if intro[6] == 1 { 2 } else { 4 } + header_len;
+    (shape, dtype, data_offset)
+}
+
+#[derive(Debug, Clone)]
+struct InputSpec {
+    path: String,
+    shape: Vec<usize>,
+    dtype: Dtype,
 }
 
 impl Tracer {
@@ -490,7 +573,7 @@ impl Tracer {
         let out = self.val(id);
         let ins: Vec<Val> = node.inputs.iter().map(|&i| self.val(i)).collect();
         match &node.kind {
-            OpKind::Constant(_) | OpKind::Compare(_) => vec![],
+            OpKind::Input | OpKind::Constant(_) | OpKind::Compare(_) => vec![],
             OpKind::Ewise(name) => match name.as_str() {
                 "add" => vec![(ins[0].id, g.clone()), (ins[1].id, g.clone())],
                 "subtract" => {
@@ -797,6 +880,7 @@ impl Tracer {
                 let val = self.constant(*n, Dtype::F64);
                 BVal { val, bdims: 0 }
             }
+            Expr::Str(_) => die("string literals are only valid as the argument of load"),
             Expr::Neg(inner) => {
                 let v = self.trace(inner, env, fns);
                 self.bunary("negate", &v)
@@ -906,6 +990,22 @@ impl Tracer {
                 let b = self.trace(&args[1], env, fns);
                 let op = if name == "max" { "maximum" } else { "minimum" };
                 self.bewise(op, a, b)
+            }
+            "load" => {
+                if args.len() != 1 {
+                    die(&format!("load expects 1 arg, got {}", args.len()));
+                }
+                let path = match &args[0] {
+                    Expr::Str(s) => s.clone(),
+                    _ => die("load expects a file path string literal"),
+                };
+                if let Some(&(_, id)) = self.inputs.iter().find(|(p, _)| *p == path) {
+                    return BVal { val: self.val(id), bdims: 0 };
+                }
+                let (shape, dtype, _) = npy_meta(&path);
+                let val = self.emit(OpKind::Input, vec![], shape, dtype);
+                self.inputs.push((path, val.id));
+                BVal { val, bdims: 0 }
             }
             "matmul" => {
                 if args.len() != 2 {
@@ -1038,6 +1138,7 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
     let arg = |i: usize| format!("%{}", node.inputs[i]);
     let out = tensor_type(&node.shape, node.dtype);
     match &node.kind {
+        OpKind::Input => unreachable!("inputs are function parameters"),
         OpKind::Constant(n) => format!("stablehlo.constant dense<{}> : {}", mlir_float(*n), out),
         OpKind::Ewise(name) => format!("stablehlo.{} {}, {} : {}", name, arg(0), arg(1), out),
         OpKind::Unary(name) => format!("stablehlo.{} {} : {}", name, arg(0), out),
@@ -1101,10 +1202,16 @@ fn build_module(tracer: &Tracer, outputs: &[Val]) -> String {
     } else {
         format!("    return {} : {}\n", names.join(", "), types.join(", "))
     };
+    let params: Vec<String> = tracer.inputs.iter()
+        .map(|&(_, id)| format!("%{}: {}", id, tensor_type(&tracer.nodes[id].shape, tracer.nodes[id].dtype)))
+        .collect();
     let mut s = String::new();
     s.push_str("module {\n");
-    s.push_str(&format!("  func.func @main(){} {{\n", signature));
+    s.push_str(&format!("  func.func @main({}){} {{\n", params.join(", "), signature));
     for (id, node) in tracer.nodes.iter().enumerate() {
+        if matches!(node.kind, OpKind::Input) {
+            continue;
+        }
         s.push_str(&format!("    %{} = {}\n", id, node_text(node, &tracer.nodes)));
     }
     s.push_str(&ret);
@@ -1142,7 +1249,7 @@ fn host_tensor(h: HostBuffer) -> Tensor {
     }
 }
 
-fn execute(mlir: &str) -> Vec<Tensor> {
+fn execute(mlir: &str, specs: &[InputSpec]) -> Vec<Tensor> {
     let plugin_path = plugin_path();
     let api = pjrt::plugin(&plugin_path)
         .load()
@@ -1154,8 +1261,16 @@ fn execute(mlir: &str) -> Vec<Tensor> {
     let executable = LoadedExecutable::builder(&client, &program)
         .build()
         .unwrap_or_else(|e| die(&format!("XLA compilation failed: {}", e)));
+    let buffers: Vec<Buffer> = specs.iter()
+        .map(|spec| {
+            npy_host_buffer(spec)
+                .to_sync(&client)
+                .copy()
+                .unwrap_or_else(|e| die(&format!("cannot transfer {} to device: {}", spec.path, e)))
+        })
+        .collect();
     let results = executable
-        .execution(())
+        .execution(buffers)
         .run_sync()
         .unwrap_or_else(|e| die(&format!("execution failed: {}", e)));
     results[0]
@@ -1221,21 +1336,58 @@ fn plugin_path() -> String {
     path
 }
 
-fn compile(path: &str) -> String {
+fn compile(path: &str) -> (String, Vec<InputSpec>) {
     let src = fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
     let mut p = Parser { toks: lexed.toks, cols: lexed.cols, lines: lexed.lines, pos: 0 };
     let prog = p.program();
-    let mut tracer = Tracer { nodes: Vec::new(), prints: Vec::new() };
+    let mut tracer = Tracer { nodes: Vec::new(), prints: Vec::new(), inputs: Vec::new() };
     tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
     let outputs = tracer.prints.clone();
-    build_module(&tracer, &outputs)
+    let specs: Vec<InputSpec> = tracer.inputs.iter()
+        .map(|&(ref path, id)| InputSpec {
+            path: path.clone(),
+            shape: tracer.nodes[id].shape.clone(),
+            dtype: tracer.nodes[id].dtype,
+        })
+        .collect();
+    (build_module(&tracer, &outputs), specs)
 }
 
 fn run(path: &str) {
-    for tensor in execute(&compile(path)) {
+    let (module, specs) = compile(path);
+    for tensor in execute(&module, &specs) {
         println!("{}", format_tensor(&tensor));
+    }
+}
+
+fn npy_host_buffer(spec: &InputSpec) -> HostBuffer {
+    let (shape, dtype, offset) = npy_meta(&spec.path);
+    if shape != spec.shape || dtype != spec.dtype {
+        die(&format!("{} changed since compilation: {:?} {} vs {:?} {}",
+                     spec.path, shape, dtype.name(), spec.shape, spec.dtype.name()));
+    }
+    let bytes = fs::read(&spec.path)
+        .unwrap_or_else(|e| die(&format!("cannot read {}: {}", spec.path, e)));
+    let count: usize = shape.iter().product();
+    let size = if dtype == Dtype::F32 { 4 } else { 8 };
+    if bytes.len() < offset + count * size {
+        die(&format!("{} is truncated: expected {} data bytes, found {}",
+                     spec.path, count * size, bytes.len() - offset));
+    }
+    let data = &bytes[offset..offset + count * size];
+    let dims: Vec<i64> = shape.iter().map(|&d| d as i64).collect();
+    match dtype {
+        Dtype::F32 => {
+            let vals: Vec<f32> = data.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
+            HostBuffer::from_data(vals, Some(dims), None)
+        }
+        Dtype::F64 => {
+            let vals: Vec<f64> = data.chunks_exact(8).map(|c| f64::from_le_bytes(c.try_into().unwrap())).collect();
+            HostBuffer::from_data(vals, Some(dims), None)
+        }
+        Dtype::I1 => unreachable!(),
     }
 }
 
@@ -1273,7 +1425,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("run") if args.len() == 3 => run(&args[2]),
-        Some("build") if args.len() == 3 => print!("{}", compile(&args[2])),
+        Some("build") if args.len() == 3 => print!("{}", compile(&args[2]).0),
         Some("setup") if args.len() == 2 => setup(),
         Some("version") if args.len() == 2 => println!("vector {}", env!("CARGO_PKG_VERSION")),
         Some("help") => println!("{}", USAGE),

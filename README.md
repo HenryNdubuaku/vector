@@ -15,7 +15,20 @@ Building from source requires `protoc` (`brew install protobuf`). `vector setup`
 
 ## Use
 
-```sh
-vector run examples/hello.vec
-vector build examples/hello.vec > hello.mlir
+```vec
+-- train.vec
+xs = load("xs.npy")
+
+fn norm_sq(v):
+  sum(v * v)
+
+print(vmap(norm_sq, xs))
+print(grad(norm_sq, f64([3.0, 4.0])))
 ```
+
+```sh
+vector run train.vec
+vector build train.vec > train.mlir
+```
+
+`load` reads `.npy` files (little-endian f32/f64, C order); the tensor becomes a runtime input to the compiled program, so shapes stay static. Output comes only from `print`. Transforms: `grad`, `vmap` (nestable), `jacobian`.

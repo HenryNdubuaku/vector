@@ -1,0 +1,10 @@
+m = load("tests/cases/data/m.npy")
+v = load("tests/cases/data/v.npy")
+print(m + 0.5)
+print(sum(v * v))
+print(matmul(m, f32([1.0, 1.0])))
+
+fn q(x):
+  sum(x * x)
+
+print(grad(q, v))

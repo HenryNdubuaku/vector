@@ -5,8 +5,29 @@ fn run_vector(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_vector")).args(args).output().unwrap()
 }
 
+fn npy_bytes(descr: &str, shape: &str, data: &[u8]) -> Vec<u8> {
+    let mut header = format!("{{'descr': '{}', 'fortran_order': False, 'shape': {}, }}", descr, shape);
+    let pad = (64 - (10 + header.len() + 1) % 64) % 64;
+    header.push_str(&" ".repeat(pad));
+    header.push('\n');
+    let mut bytes = b"\x93NUMPY\x01\x00".to_vec();
+    bytes.extend((header.len() as u16).to_le_bytes());
+    bytes.extend(header.as_bytes());
+    bytes.extend(data);
+    bytes
+}
+
+fn write_fixtures() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let m: Vec<u8> = [1.5f32, 2.5, 3.5, 4.5].iter().flat_map(|x| x.to_le_bytes()).collect();
+    fs::write("tests/cases/data/m.npy", npy_bytes("<f4", "(2, 2)", &m)).unwrap();
+    let v: Vec<u8> = [3.0f64, 4.0].iter().flat_map(|x| x.to_le_bytes()).collect();
+    fs::write("tests/cases/data/v.npy", npy_bytes("<f8", "(2,)", &v)).unwrap();
+}
+
 #[test]
 fn golden_cases() {
+    write_fixtures();
     let mut ran = 0;
     for entry in fs::read_dir("tests/cases").unwrap() {
         let path = entry.unwrap().path();
@@ -52,6 +73,16 @@ fn grad_requires_scalar_output() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("scalar") && stderr.contains("[2]"), "{}", stderr);
+}
+
+#[test]
+fn load_missing_file_fails_loud() {
+    let path = std::env::temp_dir().join("vector_load_missing.vec");
+    fs::write(&path, "print(load(\"/nonexistent/data.npy\"))\n").unwrap();
+    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(!output.status.success());
+    assert!(stderr.contains("/nonexistent/data.npy"), "{}", stderr);
 }
 
 #[test]

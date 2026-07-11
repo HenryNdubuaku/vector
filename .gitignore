@@ -18,3 +18,4 @@
 .vscode/
 *.swp
 *.lock
+tests/cases/data/
