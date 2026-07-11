@@ -1,6 +1,0 @@
-fn norm_sq(xs):
-  squares = xs * xs * 1.0
-  sum(squares)
-
-xs = f32([3.0, 4.0])
-print(norm_sq(xs))

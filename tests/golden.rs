@@ -55,6 +55,20 @@ fn grad_requires_scalar_output() {
 }
 
 #[test]
+fn mixed_depth_vmap_args_fail_loud() {
+    let path = std::env::temp_dir().join("vector_mixed_vmap.vec");
+    fs::write(
+        &path,
+        "fn f(a, b):\n  a * b\n\nfn g(r):\n  vmap(f, r, [1.0, 2.0])\n\nprint(vmap(g, [[1.0, 2.0], [3.0, 4.0]]))\n",
+    )
+    .unwrap();
+    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(!output.status.success());
+    assert!(stderr.contains("batching depth"), "{}", stderr);
+}
+
+#[test]
 fn matmul_contraction_mismatch_fails() {
     let path = std::env::temp_dir().join("vector_matmul_mismatch.vec");
     fs::write(&path, "print(matmul([[1.0, 2.0]], [[1.0, 2.0]]))\n").unwrap();
