@@ -1,9 +1,46 @@
+use std::fs;
+
 use pjrt::ProgramFormat::MLIR;
 use pjrt::{Buffer, Client, HostBuffer, LoadedExecutable};
 
-use crate::die;
 use crate::npy::{npy_host_buffer, InputSpec};
-use crate::plugin_path;
+use crate::{die, home, plugin_path};
+
+fn fnv64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+fn cache_paths(keyed: &str) -> (String, String) {
+    let hash = fnv64(keyed.as_bytes());
+    let dir = format!("{}/.vector/cache", home());
+    (format!("{}/{:016x}.mlir", dir, hash), format!("{}/{:016x}.exec", dir, hash))
+}
+
+fn load_cached(client: &Client, keyed: &str) -> Option<LoadedExecutable> {
+    let (mlir_path, exec_path) = cache_paths(keyed);
+    if fs::read_to_string(&mlir_path).ok()? != keyed {
+        return None;
+    }
+    let bytes = fs::read(&exec_path).ok()?;
+    client.load_executable(&bytes).ok()
+}
+
+fn store_cache(executable: &LoadedExecutable, keyed: &str) {
+    let (mlir_path, exec_path) = cache_paths(keyed);
+    let Ok(inner) = executable.executable() else { return };
+    let Ok(serialized) = inner.serialize() else { return };
+    if fs::create_dir_all(format!("{}/.vector/cache", home())).is_err() {
+        return;
+    }
+    if fs::write(&exec_path, serialized.bytes()).is_ok() {
+        let _ = fs::write(&mlir_path, keyed);
+    }
+}
 
 #[derive(Debug, Clone)]
 enum TensorData {
@@ -43,10 +80,15 @@ pub fn execute(mlir: &str, specs: &[InputSpec]) -> Vec<Tensor> {
     let client = Client::builder(&api)
         .build()
         .unwrap_or_else(|e| die(&format!("cannot create PJRT client: {}", e)));
-    let program = pjrt::Program::new(MLIR, mlir.as_bytes());
-    let executable = LoadedExecutable::builder(&client, &program)
-        .build()
-        .unwrap_or_else(|e| die(&format!("XLA compilation failed: {}", e)));
+    let keyed = format!("{}\n{:?}\n{}", plugin_path, api.version(), mlir);
+    let executable = load_cached(&client, &keyed).unwrap_or_else(|| {
+        let program = pjrt::Program::new(MLIR, mlir.as_bytes());
+        let executable = LoadedExecutable::builder(&client, &program)
+            .build()
+            .unwrap_or_else(|e| die(&format!("XLA compilation failed: {}", e)));
+        store_cache(&executable, &keyed);
+        executable
+    });
     let buffers: Vec<Buffer> = specs.iter()
         .map(|spec| {
             npy_host_buffer(spec)
