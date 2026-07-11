@@ -20,12 +20,11 @@ use parser::Parser;
 use runtime::{execute, format_tensor};
 use trace::Tracer;
 
-const USAGE: &str = "usage: vector <command>
+const USAGE: &str = "usage: vector <file.vec>
 
-  run <file.vec>      compile and execute
-  build <file.vec>    print StableHLO to stdout
-  setup               download the PJRT CPU plugin to ~/.vector
-  version             print version";
+  vector <file.vec>   compile and run a program
+  vector setup        download the PJRT CPU plugin to ~/.vector
+  vector version      print version";
 
 fn die(msg: &str) -> ! {
     eprintln!("{}", msg);
@@ -134,11 +133,10 @@ fn setup() {
 fn main() {
     let args: Vec<String> = env::args().collect();
     match args.get(1).map(String::as_str) {
-        Some("run") if args.len() == 3 => run(&args[2]),
-        Some("build") if args.len() == 3 => print!("{}", compile(&args[2]).0),
         Some("setup") if args.len() == 2 => setup(),
         Some("version") if args.len() == 2 => println!("vector {}", env!("CARGO_PKG_VERSION")),
         Some("help") => println!("{}", USAGE),
+        Some(path) if args.len() == 2 => run(path),
         _ => die(USAGE),
     }
 }

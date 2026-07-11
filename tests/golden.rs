@@ -35,7 +35,7 @@ fn golden_cases() {
             continue;
         }
         let expected = fs::read_to_string(path.with_extension("out")).unwrap();
-        let output = run_vector(&["run", path.to_str().unwrap()]);
+        let output = run_vector(&[path.to_str().unwrap()]);
         let stdout = String::from_utf8(output.stdout).unwrap();
         let stderr = String::from_utf8(output.stderr).unwrap();
         assert!(output.status.success(), "{}: {}", path.display(), stderr);
@@ -49,7 +49,7 @@ fn golden_cases() {
 fn shape_mismatch_fails_at_trace_time() {
     let path = std::env::temp_dir().join("vector_shape_mismatch.vec");
     fs::write(&path, "print([1.0, 2.0] + [1.0, 2.0, 3.0])\n").unwrap();
-    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let output = run_vector(&[path.to_str().unwrap()]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("[2]") && stderr.contains("[3]"), "{}", stderr);
@@ -59,7 +59,7 @@ fn shape_mismatch_fails_at_trace_time() {
 fn size_one_stretching_is_rejected() {
     let path = std::env::temp_dir().join("vector_stretch.vec");
     fs::write(&path, "print([[1.0], [2.0]] * [[1.0, 2.0], [3.0, 4.0]])\n").unwrap();
-    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let output = run_vector(&[path.to_str().unwrap()]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("[2, 1]") && stderr.contains("[2, 2]"), "{}", stderr);
@@ -69,7 +69,7 @@ fn size_one_stretching_is_rejected() {
 fn grad_requires_scalar_output() {
     let path = std::env::temp_dir().join("vector_grad_nonscalar.vec");
     fs::write(&path, "fn f(x):\n  x * 2.0\n\nprint(grad(f, [1.0, 2.0]))\n").unwrap();
-    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let output = run_vector(&[path.to_str().unwrap()]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("scalar") && stderr.contains("[2]"), "{}", stderr);
@@ -79,7 +79,7 @@ fn grad_requires_scalar_output() {
 fn load_missing_file_fails_loud() {
     let path = std::env::temp_dir().join("vector_load_missing.vec");
     fs::write(&path, "print(load(\"/nonexistent/data.npy\"))\n").unwrap();
-    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let output = run_vector(&[path.to_str().unwrap()]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("/nonexistent/data.npy"), "{}", stderr);
@@ -93,7 +93,7 @@ fn mixed_depth_vmap_args_fail_loud() {
         "fn f(a, b):\n  a * b\n\nfn g(r):\n  vmap(f, r, [1.0, 2.0])\n\nprint(vmap(g, [[1.0, 2.0], [3.0, 4.0]]))\n",
     )
     .unwrap();
-    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let output = run_vector(&[path.to_str().unwrap()]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("batching depth"), "{}", stderr);
@@ -103,7 +103,7 @@ fn mixed_depth_vmap_args_fail_loud() {
 fn print_inside_for_fails_loud() {
     let path = std::env::temp_dir().join("vector_print_in_for.vec");
     fs::write(&path, "w = 1.0\nfor i in 0..3:\n  w = w * 2.0\n  print(w)\nprint(w)\n").unwrap();
-    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let output = run_vector(&[path.to_str().unwrap()]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("print inside a for loop"), "{}", stderr);
@@ -114,7 +114,7 @@ fn print_inside_for_fails_loud() {
 fn record_field_mismatch_fails_loud() {
     let path = std::env::temp_dir().join("vector_record_mismatch.vec");
     fs::write(&path, "print({a: 1.0, b: 2.0} + {a: 1.0, c: 2.0})\n").unwrap();
-    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let output = run_vector(&[path.to_str().unwrap()]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("record fields mismatch"), "{}", stderr);
@@ -124,7 +124,7 @@ fn record_field_mismatch_fails_loud() {
 fn matmul_on_record_fails_loud() {
     let path = std::env::temp_dir().join("vector_record_matmul.vec");
     fs::write(&path, "p = {a: [[1.0]]}\nprint(matmul(p, p))\n").unwrap();
-    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let output = run_vector(&[path.to_str().unwrap()]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("cannot be a record"), "{}", stderr);
@@ -134,7 +134,7 @@ fn matmul_on_record_fails_loud() {
 fn matmul_contraction_mismatch_fails() {
     let path = std::env::temp_dir().join("vector_matmul_mismatch.vec");
     fs::write(&path, "print(matmul([[1.0, 2.0]], [[1.0, 2.0]]))\n").unwrap();
-    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let output = run_vector(&[path.to_str().unwrap()]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("matmul"), "{}", stderr);

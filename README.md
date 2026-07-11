@@ -29,7 +29,7 @@ print(loss(w))
 ```
 
 ```sh
-vector run filename.vec
+vector filename.vec
 vector build filename.vec > filename.mlir
 ```
 
