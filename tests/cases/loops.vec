@@ -1,0 +1,23 @@
+fn looped(x):
+  y = x
+  for i in 0..3:
+    y = y * y
+  sum(y)
+
+print(grad(looped, [2.0]))
+
+fn inner_double(x):
+  y = x
+  for j in 0..2:
+    y = y * 2.0
+  y
+
+acc = 1.0
+for i in 0..3:
+  acc = inner_double(acc)
+print(acc)
+
+state = {v: [1.0, 2.0], scale: 2.0}
+for i in 0..3:
+  state = state * state.scale / 2.0 + {v: [1.0, 1.0], scale: 1.0} * 0.0 + state * 0.0 + state
+print(state.v)

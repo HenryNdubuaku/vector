@@ -33,12 +33,29 @@ fn dense_text(vals: &[f64], shape: &[usize]) -> String {
     format!("[{}]", parts.join(", "))
 }
 
+fn val_name(id: usize, nodes: &[Node]) -> String {
+    match &nodes[id].kind {
+        OpKind::Proj(k) => {
+            let w = nodes[id].inputs[0];
+            let count = match &nodes[w].kind {
+                OpKind::While { iter_args, .. } => iter_args.len(),
+                _ => unreachable!("Proj of a non-while node"),
+            };
+            if count == 1 { format!("%{}", w) } else { format!("%{}#{}", w, k) }
+        }
+        _ => format!("%{}", id),
+    }
+}
+
 fn node_text(node: &Node, nodes: &[Node]) -> String {
     let t = |i: usize| tensor_type(&nodes[node.inputs[i]].shape, nodes[node.inputs[i]].dtype);
-    let arg = |i: usize| format!("%{}", node.inputs[i]);
+    let arg = |i: usize| val_name(node.inputs[i], nodes);
     let out = tensor_type(&node.shape, node.dtype);
     match &node.kind {
         OpKind::Input => unreachable!("inputs are function parameters"),
+        OpKind::IterArg => unreachable!("iter args are while binders"),
+        OpKind::Proj(_) => unreachable!("projections are name aliases"),
+        OpKind::While { .. } => unreachable!("while is emitted by the region writer"),
         OpKind::Iota => format!("stablehlo.iota dim = 0 : {}", out),
         OpKind::Constant(n) => format!("stablehlo.constant dense<{}> : {}", mlir_float(*n), out),
         OpKind::DenseConst(vals) => format!("stablehlo.constant dense<{}> : {}", dense_text(vals, &node.shape), out),
@@ -91,9 +108,52 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
     }
 }
 
+fn write_while(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
+    let OpKind::While { iter_args, results, body, limit } = &nodes[id].kind else {
+        unreachable!()
+    };
+    let ind = " ".repeat(indent);
+    let binders: Vec<String> = iter_args.iter().zip(&nodes[id].inputs)
+        .map(|(&a, &i)| format!("%{} = {}", a, val_name(i, nodes)))
+        .collect();
+    let types: Vec<String> = iter_args.iter()
+        .map(|&a| tensor_type(&nodes[a].shape, nodes[a].dtype))
+        .collect();
+    let head = if iter_args.len() == 1 {
+        format!("%{}", id)
+    } else {
+        format!("%{}:{}", id, iter_args.len())
+    };
+    s.push_str(&format!("{}{} = stablehlo.while({}) : {}\n", ind, head, binders.join(", "), types.join(", ")));
+    s.push_str(&format!("{} cond {{\n", ind));
+    s.push_str(&format!(
+        "{}  %c{} = stablehlo.compare LT, %{}, {} : (tensor<f64>, tensor<f64>) -> tensor<i1>\n",
+        ind, id, iter_args[0], val_name(*limit, nodes)
+    ));
+    s.push_str(&format!("{}  stablehlo.return %c{} : tensor<i1>\n", ind, id));
+    s.push_str(&format!("{} }} do {{\n", ind));
+    write_region(s, body, nodes, indent + 2);
+    let rnames: Vec<String> = results.iter().map(|&r| val_name(r, nodes)).collect();
+    s.push_str(&format!("{}  stablehlo.return {} : {}\n", ind, rnames.join(", "), types.join(", ")));
+    s.push_str(&format!("{} }}\n", ind));
+}
+
+fn write_region(s: &mut String, ids: &[usize], nodes: &[Node], indent: usize) {
+    for &id in ids {
+        match &nodes[id].kind {
+            OpKind::Input | OpKind::IterArg | OpKind::Proj(_) => {}
+            OpKind::While { .. } => write_while(s, id, nodes, indent),
+            _ => {
+                s.push_str(&" ".repeat(indent));
+                s.push_str(&format!("%{} = {}\n", id, node_text(&nodes[id], nodes)));
+            }
+        }
+    }
+}
+
 pub fn build_module(tracer: &Tracer, outputs: &[Val]) -> String {
     let types: Vec<String> = outputs.iter().map(|v| tensor_type(&v.shape, v.dtype)).collect();
-    let names: Vec<String> = outputs.iter().map(|v| format!("%{}", v.id)).collect();
+    let names: Vec<String> = outputs.iter().map(|v| val_name(v.id, &tracer.nodes)).collect();
     let signature = if types.is_empty() {
         String::new()
     } else {
@@ -107,15 +167,17 @@ pub fn build_module(tracer: &Tracer, outputs: &[Val]) -> String {
     let params: Vec<String> = tracer.inputs.iter()
         .map(|&(_, id)| format!("%{}: {}", id, tensor_type(&tracer.nodes[id].shape, tracer.nodes[id].dtype)))
         .collect();
+    let mut claimed = std::collections::HashSet::new();
+    for node in &tracer.nodes {
+        if let OpKind::While { body, .. } = &node.kind {
+            claimed.extend(body.iter().copied());
+        }
+    }
+    let top: Vec<usize> = (0..tracer.nodes.len()).filter(|id| !claimed.contains(id)).collect();
     let mut s = String::new();
     s.push_str("module {\n");
     s.push_str(&format!("  func.func @main({}){} {{\n", params.join(", "), signature));
-    for (id, node) in tracer.nodes.iter().enumerate() {
-        if matches!(node.kind, OpKind::Input) {
-            continue;
-        }
-        s.push_str(&format!("    %{} = {}\n", id, node_text(node, &tracer.nodes)));
-    }
+    write_region(&mut s, &top, &tracer.nodes, 4);
     s.push_str(&ret);
     s.push_str("  }\n}\n");
     s

@@ -80,6 +80,14 @@ pub enum OpKind {
     Select,
     Concat(usize),
     Slice(usize, usize, usize),
+    IterArg,
+    Proj(usize),
+    While {
+        iter_args: Vec<usize>,
+        results: Vec<usize>,
+        body: Vec<usize>,
+        limit: usize,
+    },
 }
 
 #[derive(Debug, Clone)]

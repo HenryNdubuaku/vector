@@ -100,6 +100,17 @@ fn mixed_depth_vmap_args_fail_loud() {
 }
 
 #[test]
+fn print_inside_for_fails_loud() {
+    let path = std::env::temp_dir().join("vector_print_in_for.vec");
+    fs::write(&path, "w = 1.0\nfor i in 0..3:\n  w = w * 2.0\n  print(w)\nprint(w)\n").unwrap();
+    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(!output.status.success());
+    assert!(stderr.contains("print inside a for loop"), "{}", stderr);
+}
+
+
+#[test]
 fn record_field_mismatch_fails_loud() {
     let path = std::env::temp_dir().join("vector_record_mismatch.vec");
     fs::write(&path, "print({a: 1.0, b: 2.0} + {a: 1.0, c: 2.0})\n").unwrap();
