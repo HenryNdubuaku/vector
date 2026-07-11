@@ -361,63 +361,71 @@ struct Val {
     dtype: Dtype,
 }
 
+#[derive(Debug, Clone)]
+enum OpKind {
+    Constant(f64),
+    Ewise(String),
+    Unary(String),
+    Convert,
+    Broadcast(Vec<usize>),
+    Reshape,
+    Concat,
+    Reduce(Vec<usize>),
+    Dot(Vec<usize>, Vec<usize>),
+}
+
+#[derive(Debug, Clone)]
+struct Node {
+    kind: OpKind,
+    inputs: Vec<usize>,
+    shape: Vec<usize>,
+    dtype: Dtype,
+}
+
 struct Tracer {
-    ops: Vec<String>,
-    next_id: usize,
+    nodes: Vec<Node>,
     prints: Vec<Val>,
 }
 
 impl Tracer {
-    fn emit(&mut self, op: String, shape: Vec<usize>, dtype: Dtype) -> Val {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.ops.push(format!("    %{} = {}", id, op));
+    fn emit(&mut self, kind: OpKind, inputs: Vec<usize>, shape: Vec<usize>, dtype: Dtype) -> Val {
+        let id = self.nodes.len();
+        self.nodes.push(Node { kind, inputs, shape: shape.clone(), dtype });
         Val { id, shape, dtype }
     }
 
+    fn val(&self, id: usize) -> Val {
+        let node = &self.nodes[id];
+        Val { id, shape: node.shape.clone(), dtype: node.dtype }
+    }
+
     fn constant(&mut self, n: f64, dtype: Dtype) -> Val {
-        self.emit(
-            format!("stablehlo.constant dense<{}> : {}", mlir_float(n), tensor_type(&[], dtype)),
-            vec![],
-            dtype,
-        )
+        self.emit(OpKind::Constant(n), vec![], vec![], dtype)
     }
 
     fn convert(&mut self, v: &Val, dtype: Dtype) -> Val {
         if v.dtype == dtype {
             return v.clone();
         }
-        let op = format!(
-            "stablehlo.convert %{} : ({}) -> {}",
-            v.id, tensor_type(&v.shape, v.dtype), tensor_type(&v.shape, dtype)
-        );
-        self.emit(op, v.shape.clone(), dtype)
+        self.emit(OpKind::Convert, vec![v.id], v.shape.clone(), dtype)
     }
 
     fn broadcast(&mut self, v: &Val, shape: &[usize]) -> Val {
         let offset = shape.len() - v.shape.len();
-        let dims: Vec<String> = (offset..shape.len()).map(|d| d.to_string()).collect();
-        let op = format!(
-            "stablehlo.broadcast_in_dim %{}, dims = [{}] : ({}) -> {}",
-            v.id,
-            dims.join(", "),
-            tensor_type(&v.shape, v.dtype),
-            tensor_type(shape, v.dtype)
-        );
-        self.emit(op, shape.to_vec(), v.dtype)
+        let dims: Vec<usize> = (offset..shape.len()).collect();
+        self.broadcast_along(v, shape, dims)
+    }
+
+    fn broadcast_along(&mut self, v: &Val, shape: &[usize], dims: Vec<usize>) -> Val {
+        self.emit(OpKind::Broadcast(dims), vec![v.id], shape.to_vec(), v.dtype)
     }
 
     fn unary(&mut self, name: &str, v: &Val) -> Val {
-        let op = format!("stablehlo.{} %{} : {}", name, v.id, tensor_type(&v.shape, v.dtype));
-        self.emit(op, v.shape.clone(), v.dtype)
+        self.emit(OpKind::Unary(name.to_string()), vec![v.id], v.shape.clone(), v.dtype)
     }
 
     fn reshape(&mut self, v: &Val, shape: Vec<usize>) -> Val {
-        let op = format!(
-            "stablehlo.reshape %{} : ({}) -> {}",
-            v.id, tensor_type(&v.shape, v.dtype), tensor_type(&shape, v.dtype)
-        );
-        self.emit(op, shape, v.dtype)
+        self.emit(OpKind::Reshape, vec![v.id], shape, v.dtype)
     }
 
     fn ewise(&mut self, name: &str, a: Val, b: Val) -> Val {
@@ -441,9 +449,8 @@ impl Tracer {
         } else {
             die(&format!("shape mismatch: {:?} vs {:?} (broadcast aligns trailing dims)", a.shape, b.shape));
         };
-        let text = format!("stablehlo.{} %{}, %{} : {}", name, a.id, b.id, tensor_type(&a.shape, a.dtype));
-        let (shape, dtype) = (a.shape, a.dtype);
-        self.emit(text, shape, dtype)
+        let (shape, dtype) = (a.shape.clone(), a.dtype);
+        self.emit(OpKind::Ewise(name.to_string()), vec![a.id, b.id], shape, dtype)
     }
 
     fn binop(&mut self, op: Op, a: Val, b: Val) -> Val {
@@ -466,23 +473,18 @@ impl Tracer {
         if a.shape[a.shape.len() - 1] != b.shape[0] {
             die(&format!("matmul contraction mismatch: {:?} vs {:?}", a.shape, b.shape));
         }
-        let mut shape = Vec::new();
-        if a.shape.len() == 2 {
-            shape.push(a.shape[0]);
-        }
-        if b.shape.len() == 2 {
-            shape.push(b.shape[1]);
-        }
-        let op = format!(
-            "stablehlo.dot_general %{}, %{}, contracting_dims = [{}] x [0] : ({}, {}) -> {}",
-            a.id,
-            b.id,
-            a.shape.len() - 1,
-            tensor_type(&a.shape, a.dtype),
-            tensor_type(&b.shape, b.dtype),
-            tensor_type(&shape, a.dtype)
-        );
-        self.emit(op, shape, a.dtype)
+        self.dot(&a, &b, vec![a.shape.len() - 1], vec![0])
+    }
+
+    fn dot(&mut self, a: &Val, b: &Val, lc: Vec<usize>, rc: Vec<usize>) -> Val {
+        let mut shape: Vec<usize> = a.shape.iter().enumerate()
+            .filter(|(i, _)| !lc.contains(i))
+            .map(|(_, &d)| d)
+            .collect();
+        shape.extend(b.shape.iter().enumerate()
+            .filter(|(i, _)| !rc.contains(i))
+            .map(|(_, &d)| d));
+        self.emit(OpKind::Dot(lc, rc), vec![a.id, b.id], shape, a.dtype)
     }
 
     fn reduce_sum(&mut self, v: &Val, axes: &[usize]) -> Val {
@@ -494,17 +496,7 @@ impl Tracer {
             .filter(|(i, _)| !axes.contains(i))
             .map(|(_, &d)| d)
             .collect();
-        let dims: Vec<String> = axes.iter().map(|d| d.to_string()).collect();
-        let op = format!(
-            "stablehlo.reduce(%{} init: %{}) applies stablehlo.add across dimensions = [{}] : ({}, {}) -> {}",
-            v.id,
-            init.id,
-            dims.join(", "),
-            tensor_type(&v.shape, v.dtype),
-            tensor_type(&[], v.dtype),
-            tensor_type(&out_shape, v.dtype)
-        );
-        self.emit(op, out_shape, v.dtype)
+        self.emit(OpKind::Reduce(axes.to_vec()), vec![v.id, init.id], out_shape, v.dtype)
     }
 
     fn stack(&mut self, vals: Vec<Val>) -> Val {
@@ -526,15 +518,8 @@ impl Tracer {
         }
         let mut shape = vec![rows.len()];
         shape.extend(&inner_shape);
-        let operands: Vec<String> = rows.iter().map(|r| format!("%{}", r.id)).collect();
-        let in_types: Vec<String> = rows.iter().map(|_| tensor_type(&row_shape, dtype)).collect();
-        let op = format!(
-            "stablehlo.concatenate {}, dim = 0 : ({}) -> {}",
-            operands.join(", "),
-            in_types.join(", "),
-            tensor_type(&shape, dtype)
-        );
-        self.emit(op, shape, dtype)
+        let ids: Vec<usize> = rows.iter().map(|r| r.id).collect();
+        self.emit(OpKind::Concat, ids, shape, dtype)
     }
 
     fn trace(&mut self, e: &Expr, env: &HashMap<String, Val>, fns: &HashMap<String, Decl>) -> Val {
@@ -659,6 +644,43 @@ impl Tracer {
     }
 }
 
+fn join(xs: &[usize]) -> String {
+    xs.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ")
+}
+
+fn node_text(node: &Node, nodes: &[Node]) -> String {
+    let t = |i: usize| tensor_type(&nodes[node.inputs[i]].shape, nodes[node.inputs[i]].dtype);
+    let arg = |i: usize| format!("%{}", node.inputs[i]);
+    let out = tensor_type(&node.shape, node.dtype);
+    match &node.kind {
+        OpKind::Constant(n) => format!("stablehlo.constant dense<{}> : {}", mlir_float(*n), out),
+        OpKind::Ewise(name) => format!("stablehlo.{} {}, {} : {}", name, arg(0), arg(1), out),
+        OpKind::Unary(name) => format!("stablehlo.{} {} : {}", name, arg(0), out),
+        OpKind::Convert => format!("stablehlo.convert {} : ({}) -> {}", arg(0), t(0), out),
+        OpKind::Broadcast(dims) => format!(
+            "stablehlo.broadcast_in_dim {}, dims = [{}] : ({}) -> {}",
+            arg(0), join(dims), t(0), out
+        ),
+        OpKind::Reshape => format!("stablehlo.reshape {} : ({}) -> {}", arg(0), t(0), out),
+        OpKind::Concat => {
+            let operands: Vec<String> = (0..node.inputs.len()).map(arg).collect();
+            let in_types: Vec<String> = (0..node.inputs.len()).map(t).collect();
+            format!(
+                "stablehlo.concatenate {}, dim = 0 : ({}) -> {}",
+                operands.join(", "), in_types.join(", "), out
+            )
+        }
+        OpKind::Reduce(axes) => format!(
+            "stablehlo.reduce({} init: {}) applies stablehlo.add across dimensions = [{}] : ({}, {}) -> {}",
+            arg(0), arg(1), join(axes), t(0), t(1), out
+        ),
+        OpKind::Dot(lc, rc) => format!(
+            "stablehlo.dot_general {}, {}, contracting_dims = [{}] x [{}] : ({}, {}) -> {}",
+            arg(0), arg(1), join(lc), join(rc), t(0), t(1), out
+        ),
+    }
+}
+
 fn build_module(tracer: &Tracer, outputs: &[Val]) -> String {
     let types: Vec<String> = outputs.iter().map(|v| tensor_type(&v.shape, v.dtype)).collect();
     let names: Vec<String> = outputs.iter().map(|v| format!("%{}", v.id)).collect();
@@ -675,9 +697,8 @@ fn build_module(tracer: &Tracer, outputs: &[Val]) -> String {
     let mut s = String::new();
     s.push_str("module {\n");
     s.push_str(&format!("  func.func @main(){} {{\n", signature));
-    for op in &tracer.ops {
-        s.push_str(op);
-        s.push('\n');
+    for (id, node) in tracer.nodes.iter().enumerate() {
+        s.push_str(&format!("    %{} = {}\n", id, node_text(node, &tracer.nodes)));
     }
     s.push_str(&ret);
     s.push_str("  }\n}\n");
@@ -799,7 +820,7 @@ fn compile(path: &str) -> String {
     let lexed = lex(&src);
     let mut p = Parser { toks: lexed.toks, cols: lexed.cols, lines: lexed.lines, pos: 0 };
     let prog = p.program();
-    let mut tracer = Tracer { ops: Vec::new(), next_id: 0, prints: Vec::new() };
+    let mut tracer = Tracer { nodes: Vec::new(), prints: Vec::new() };
     tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
     let outputs = tracer.prints.clone();
     build_module(&tracer, &outputs)
