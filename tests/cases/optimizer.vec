@@ -1,0 +1,10 @@
+fn f(x):
+  sum(x * x)
+
+state = {x: [1.0], m: [0.0]}
+for i in 0..3:
+  g = grad(f, state.x)
+  m = 0.5 * state.m + g
+  state = {x: state.x - 0.5 * m, m: m}
+print(state.x)
+print(state.m)

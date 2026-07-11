@@ -6,6 +6,7 @@ pub enum Tok {
     Str(String),
     Ident(String),
     Fn,
+    Module,
     For,
     In,
     DotDot,
@@ -129,6 +130,7 @@ pub fn lex(src: &str) -> Lexed {
                 }
                 let t = match s.as_str() {
                     "fn" => Tok::Fn,
+                    "module" => Tok::Module,
                     "for" => Tok::For,
                     "in" => Tok::In,
                     _ => Tok::Ident(s),

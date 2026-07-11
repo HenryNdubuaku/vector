@@ -31,16 +31,22 @@ pub fn per_shape(v: &BVal) -> Vec<usize> {
 }
 
 #[derive(Debug, Clone)]
+pub struct ModTag {
+    pub module: String,
+    pub statics: Vec<(String, f64)>,
+}
+
+#[derive(Debug, Clone)]
 pub enum TVal {
     Tensor(BVal),
-    Record(Vec<(String, TVal)>),
+    Record(Option<ModTag>, Vec<(String, TVal)>),
 }
 
 impl TVal {
     pub fn tensor(self, what: &str) -> BVal {
         match self {
             TVal::Tensor(b) => b,
-            TVal::Record(_) => die(&format!("{} cannot be a record", what)),
+            TVal::Record(..) => die(&format!("{} cannot be a record", what)),
         }
     }
 }
@@ -62,6 +68,7 @@ pub enum OpKind {
     Input,
     Iota,
     Constant(f64),
+    DenseConst(Vec<f64>),
     Ewise(String),
     Unary(String),
     Convert,

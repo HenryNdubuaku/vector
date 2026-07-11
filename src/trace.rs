@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 
 use crate::die;
-use crate::graph::{broadcast_shape, per_shape, BVal, Dtype, Node, OpKind, TVal, Val};
+use crate::graph::{broadcast_shape, per_shape, BVal, Dtype, ModTag, Node, OpKind, TVal, Val};
 use crate::npy::npy_meta;
-use crate::parser::{Decl, Expr, Op};
+use crate::parser::{Decl, Expr, ModuleDecl, Op};
 
 pub struct Tracer {
     pub nodes: Vec<Node>,
     pub prints: Vec<(Option<String>, Val)>,
     pub inputs: Vec<(String, usize)>,
+    pub modules: HashMap<String, ModuleDecl>,
+    pub statics: Vec<HashMap<String, f64>>,
+    pub rng: u64,
 }
 
 impl Tracer {
@@ -107,7 +110,7 @@ impl Tracer {
     fn tmap2(&mut self, name: &str, a: TVal, b: TVal) -> TVal {
         match (a, b) {
             (TVal::Tensor(x), TVal::Tensor(y)) => TVal::Tensor(self.bewise(name, x, y)),
-            (TVal::Record(ra), TVal::Record(rb)) => {
+            (TVal::Record(ta, ra), TVal::Record(tb, rb)) => {
                 if ra.len() != rb.len() {
                     die(&format!("record fields mismatch: {} vs {} fields", ra.len(), rb.len()));
                 }
@@ -118,23 +121,23 @@ impl Tracer {
                     let r = self.tmap2(name, av, bv);
                     fields.push((k, r));
                 }
-                TVal::Record(fields)
+                TVal::Record(ta.or(tb), fields)
             }
-            (TVal::Record(ra), b) => {
+            (TVal::Record(ta, ra), b) => {
                 let mut fields = Vec::new();
                 for (k, av) in ra {
                     let r = self.tmap2(name, av, b.clone());
                     fields.push((k, r));
                 }
-                TVal::Record(fields)
+                TVal::Record(ta, fields)
             }
-            (a, TVal::Record(rb)) => {
+            (a, TVal::Record(tb, rb)) => {
                 let mut fields = Vec::new();
                 for (k, bv) in rb {
                     let r = self.tmap2(name, a.clone(), bv);
                     fields.push((k, r));
                 }
-                TVal::Record(fields)
+                TVal::Record(tb, fields)
             }
         }
     }
@@ -142,13 +145,13 @@ impl Tracer {
     fn tunary(&mut self, name: &str, v: &TVal) -> TVal {
         match v {
             TVal::Tensor(b) => TVal::Tensor(self.bunary(name, b)),
-            TVal::Record(fields) => {
+            TVal::Record(tag, fields) => {
                 let mut out = Vec::new();
                 for (k, f) in fields {
                     let r = self.tunary(name, f);
                     out.push((k.clone(), r));
                 }
-                TVal::Record(out)
+                TVal::Record(tag.clone(), out)
             }
         }
     }
@@ -159,13 +162,13 @@ impl Tracer {
                 let val = self.convert(&b.val, dtype);
                 TVal::Tensor(BVal { val, bdims: b.bdims })
             }
-            TVal::Record(fields) => {
+            TVal::Record(tag, fields) => {
                 let mut out = Vec::new();
                 for (k, f) in fields {
                     let r = self.tconvert(f, dtype);
                     out.push((k.clone(), r));
                 }
-                TVal::Record(out)
+                TVal::Record(tag.clone(), out)
             }
         }
     }
@@ -173,7 +176,7 @@ impl Tracer {
     fn push_prints(&mut self, label: Option<String>, v: &TVal) {
         match v {
             TVal::Tensor(b) => self.prints.push((label, b.val.clone())),
-            TVal::Record(fields) => {
+            TVal::Record(_, fields) => {
                 for (k, f) in fields {
                     let path = match &label {
                         Some(p) => format!("{}.{}", p, k),
@@ -183,6 +186,51 @@ impl Tracer {
                 }
             }
         }
+    }
+
+    fn instantiate(&mut self, name: &str, args: &[Expr], env: &HashMap<String, TVal>, fns: &HashMap<String, Decl>) -> TVal {
+        let decl = self.modules.get(name).unwrap().clone();
+        if args.len() != decl.params.len() {
+            die(&format!("module {} expects {} args, got {}", name, decl.params.len(), args.len()));
+        }
+        let statics: Vec<(String, f64)> = decl.params.iter()
+            .zip(args)
+            .map(|(p, a)| (p.clone(), self.num_lit(a, env, &format!("module {} argument", name))))
+            .collect();
+        self.statics.push(statics.iter().cloned().collect());
+        let inited = self.trace(&decl.init, &HashMap::new(), fns);
+        self.statics.pop();
+        match inited {
+            TVal::Record(_, fields) => {
+                TVal::Record(Some(ModTag { module: name.to_string(), statics }), fields)
+            }
+            TVal::Tensor(_) => die(&format!("module {} init must produce a record", name)),
+        }
+    }
+
+    fn call_method(&mut self, callee: TVal, method: &str, args: Vec<TVal>, fns: &HashMap<String, Decl>) -> TVal {
+        let tag = match &callee {
+            TVal::Record(Some(t), _) => t.clone(),
+            _ => die("value is not callable (only module instances can be applied)"),
+        };
+        let module = self.modules.get(&tag.module)
+            .unwrap_or_else(|| die(&format!("unknown module: {}", tag.module)))
+            .clone();
+        let decl = module.method(method)
+            .unwrap_or_else(|| die(&format!("module {} has no method {}", tag.module, method)));
+        if args.len() != decl.params.len() - 1 {
+            die(&format!("{}.{} expects {} args, got {}",
+                         tag.module, method, decl.params.len() - 1, args.len()));
+        }
+        let mut env2 = HashMap::new();
+        env2.insert(decl.params[0].clone(), callee);
+        for (p, v) in decl.params[1..].iter().zip(args) {
+            env2.insert(p.clone(), v);
+        }
+        self.statics.push(tag.statics.iter().cloned().collect());
+        let out = self.trace(&decl.body, &env2, fns);
+        self.statics.pop();
+        out
     }
 
     pub fn dot(&mut self, a: &Val, b: &Val, lb: Vec<usize>, rb: Vec<usize>, lc: Vec<usize>, rc: Vec<usize>) -> Val {
@@ -342,10 +390,10 @@ impl Tracer {
                     let t = self.trace(v, env, fns);
                     out.push((k.clone(), t));
                 }
-                TVal::Record(out)
+                TVal::Record(None, out)
             }
             Expr::Field(inner, name) => match self.trace(inner, env, fns) {
-                TVal::Record(fields) => fields.iter()
+                TVal::Record(_, fields) => fields.iter()
                     .find(|(k, _)| k == name)
                     .map(|(_, v)| v.clone())
                     .unwrap_or_else(|| {
@@ -354,6 +402,30 @@ impl Tracer {
                     }),
                 TVal::Tensor(_) => die(&format!("field access '.{}' on a tensor", name)),
             },
+            Expr::Apply(callee, args) => {
+                if let Expr::Field(obj, mname) = callee.as_ref() {
+                    let o = self.trace(obj, env, fns);
+                    let argv: Vec<TVal> = args.iter().map(|a| self.trace(a, env, fns)).collect();
+                    if let TVal::Record(tag, fields) = &o {
+                        if let Some((_, field_val)) = fields.iter().find(|(k, _)| k == mname) {
+                            let field_val = field_val.clone();
+                            return self.call_method(field_val, "forward", argv, fns);
+                        }
+                        if let Some(t) = tag {
+                            let has_method = self.modules.get(&t.module)
+                                .map(|m| m.method(mname).is_some())
+                                .unwrap_or(false);
+                            if has_method {
+                                return self.call_method(o, mname, argv, fns);
+                            }
+                        }
+                    }
+                    die(&format!("no field or method '{}' to call", mname));
+                }
+                let c = self.trace(callee, env, fns);
+                let argv: Vec<TVal> = args.iter().map(|a| self.trace(a, env, fns)).collect();
+                self.call_method(c, "forward", argv, fns)
+            }
             Expr::Neg(inner) => {
                 let v = self.trace(inner, env, fns);
                 self.tunary("negate", &v)
@@ -370,6 +442,9 @@ impl Tracer {
             Expr::Var(s) => {
                 if let Some(v) = env.get(s) {
                     v.clone()
+                } else if let Some(n) = self.static_num(s) {
+                    let val = self.constant(n, Dtype::F64);
+                    TVal::Tensor(BVal { val, bdims: 0 })
                 } else if fns.contains_key(s) {
                     die(&format!("'{}' is a function; first-class functions aren't supported yet", s));
                 } else {
@@ -415,7 +490,13 @@ impl Tracer {
                 self.trace(rest, env, fns)
             }
             Expr::Call(name, args) => {
-                if let Some(decl) = fns.get(name) {
+                if let Some(callee) = env.get(name) {
+                    let callee = callee.clone();
+                    let argv: Vec<TVal> = args.iter().map(|a| self.trace(a, env, fns)).collect();
+                    self.call_method(callee, "forward", argv, fns)
+                } else if self.modules.contains_key(name) {
+                    self.instantiate(name, args, env, fns)
+                } else if let Some(decl) = fns.get(name) {
                     if decl.params.len() != args.len() {
                         die(&format!("arity mismatch: {} expects {} args, got {}",
                                      name, decl.params.len(), args.len()));
@@ -425,7 +506,10 @@ impl Tracer {
                         let v = self.trace(arg, env, fns);
                         env2.insert(param.clone(), v);
                     }
-                    self.trace(&decl.body, &env2, fns)
+                    self.statics.push(HashMap::new());
+                    let out = self.trace(&decl.body, &env2, fns);
+                    self.statics.pop();
+                    out
                 } else {
                     self.builtin(name, args, env, fns)
                 }
@@ -442,7 +526,7 @@ impl Tracer {
                 let v = self.trace(&args[0], env, fns).tensor(name);
                 let per = per_shape(&v);
                 let per_axes: Vec<usize> = if args.len() == 2 {
-                    vec![axis_arg(&args[1], &per)]
+                    vec![self.axis_lit(&args[1], env, &per)]
                 } else {
                     (0..per.len()).collect()
                 };
@@ -530,7 +614,7 @@ impl Tracer {
                 if args.is_empty() || args.len() > 3 {
                     die(&format!("arange expects (stop), (start, stop) or (start, stop, step), got {} args", args.len()));
                 }
-                let lits: Vec<f64> = args.iter().map(|a| num_lit(a, "arange argument")).collect();
+                let lits: Vec<f64> = args.iter().map(|a| self.num_lit(a, env, "arange argument")).collect();
                 let (start, stop, step) = match lits.len() {
                     1 => (0.0, lits[0], 1.0),
                     2 => (lits[0], lits[1], 1.0),
@@ -550,12 +634,30 @@ impl Tracer {
                 let val = self.ewise("add", scaled, start_c);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
+            "linspace" => {
+                if args.len() != 3 {
+                    die(&format!("linspace expects (start, stop, count), got {} args", args.len()));
+                }
+                let start = self.num_lit(&args[0], env, "linspace start");
+                let stop = self.num_lit(&args[1], env, "linspace stop");
+                let count = self.int_lit(&args[2], env, "linspace count");
+                if count == 0 {
+                    die("linspace count must be at least 1");
+                }
+                let step = if count == 1 { 0.0 } else { (stop - start) / (count - 1) as f64 };
+                let indices = self.emit(OpKind::Iota, vec![], vec![count], Dtype::F64);
+                let step_c = self.constant(step, Dtype::F64);
+                let scaled = self.ewise("multiply", indices, step_c);
+                let start_c = self.constant(start, Dtype::F64);
+                let val = self.ewise("add", scaled, start_c);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
             "reshape" => {
                 if args.len() < 2 {
                     die("reshape expects a value and dimension literals");
                 }
                 let v = self.trace(&args[0], env, fns).tensor("reshape");
-                let dims: Vec<usize> = args[1..].iter().map(|a| int_lit(a, "reshape dimension")).collect();
+                let dims: Vec<usize> = args[1..].iter().map(|a| self.int_lit(a, env, "reshape dimension")).collect();
                 let per = per_shape(&v);
                 if dims.iter().product::<usize>() != per.iter().product::<usize>() {
                     die(&format!("reshape from {:?} to {:?} changes element count", per, dims));
@@ -564,6 +666,20 @@ impl Tracer {
                 shape.extend(&dims);
                 let val = self.reshape(&v.val, shape);
                 TVal::Tensor(BVal { val, bdims: v.bdims })
+            }
+            "zeros" | "randn" => {
+                if args.is_empty() {
+                    die(&format!("{} expects dimension literals", name));
+                }
+                let dims: Vec<usize> = args.iter().map(|a| self.int_lit(a, env, "dimension")).collect();
+                if name == "zeros" {
+                    let val = self.zeros(&dims, Dtype::F64);
+                    return TVal::Tensor(BVal { val, bdims: 0 });
+                }
+                let count: usize = dims.iter().product();
+                let vals: Vec<f64> = (0..count).map(|_| self.next_normal()).collect();
+                let val = self.emit(OpKind::DenseConst(vals), vec![], dims, Dtype::F64);
+                TVal::Tensor(BVal { val, bdims: 0 })
             }
             "max" | "min" => {
                 if args.len() != 2 {
@@ -599,14 +715,25 @@ impl Tracer {
                 TVal::Tensor(self.bmatmul(a, b))
             }
             "grad" => {
-                let (fname, decl, vals) = self.transform_args("grad", args, env, fns);
-                let mut env2 = HashMap::new();
-                for (param, v) in decl.params.iter().zip(&vals) {
-                    env2.insert(param.clone(), v.clone());
-                }
-                let y = match self.trace(&decl.body, &env2, fns) {
+                let (fname, target, traced) = if let Some(Expr::Field(obj, mname)) = args.first() {
+                    let inst = self.trace(obj, env, fns);
+                    let extras: Vec<TVal> = args[1..].iter().map(|a| self.trace(a, env, fns)).collect();
+                    let out = self.call_method(inst.clone(), mname, extras, fns);
+                    (format!(".{}", mname), inst, out)
+                } else {
+                    let (fname, decl, vals) = self.transform_args("grad", args, env, fns);
+                    let mut env2 = HashMap::new();
+                    for (param, v) in decl.params.iter().zip(&vals) {
+                        env2.insert(param.clone(), v.clone());
+                    }
+                    self.statics.push(HashMap::new());
+                    let out = self.trace(&decl.body, &env2, fns);
+                    self.statics.pop();
+                    (fname, vals.into_iter().next().unwrap(), out)
+                };
+                let y = match traced {
                     TVal::Tensor(b) => b,
-                    TVal::Record(_) => die(&format!("grad requires a scalar-valued function; {} returned a record", fname)),
+                    TVal::Record(..) => die(&format!("grad requires a scalar-valued function; {} returned a record", fname)),
                 };
                 let per = per_shape(&y);
                 if !per.is_empty() {
@@ -617,11 +744,11 @@ impl Tracer {
                     if y.bdims > 0 { self.broadcast(&one, &y.val.shape.clone()) } else { one }
                 };
                 let mut leaves = Vec::new();
-                collect_leaves(&vals[0], &mut leaves);
+                collect_leaves(&target, &mut leaves);
                 let targets: Vec<Val> = leaves.iter().map(|b| b.val.clone()).collect();
                 let grads = self.backward(&y.val, &targets, seed);
                 let mut grads = grads.into_iter();
-                rebuild(&vals[0], &mut grads)
+                rebuild(&target, &mut grads)
             }
             "vmap" => {
                 let (fname, decl, vals) = self.transform_args("vmap", args, env, fns);
@@ -644,7 +771,9 @@ impl Tracer {
                 for (param, v) in decl.params.iter().zip(&vals) {
                     env2.insert(param.clone(), TVal::Tensor(BVal { val: v.val.clone(), bdims: k + 1 }));
                 }
+                self.statics.push(HashMap::new());
                 let y = self.trace(&decl.body, &env2, fns).tensor("vmap function result");
+                self.statics.pop();
                 let val = if y.bdims == k + 1 {
                     y.val
                 } else {
@@ -664,9 +793,12 @@ impl Tracer {
                 for (param, v) in decl.params.iter().zip(&vals) {
                     env2.insert(param.clone(), v.clone());
                 }
-                let y = match self.trace(&decl.body, &env2, fns) {
+                self.statics.push(HashMap::new());
+                let traced = self.trace(&decl.body, &env2, fns);
+                self.statics.pop();
+                let y = match traced {
                     TVal::Tensor(b) => b,
-                    TVal::Record(_) => die(&format!("jacobian requires a vector-valued function; {} returned a record", fname)),
+                    TVal::Record(..) => die(&format!("jacobian requires a vector-valued function; {} returned a record", fname)),
                 };
                 let per = per_shape(&y);
                 if per.len() != 1 {
@@ -726,7 +858,7 @@ impl Tracer {
 fn collect_leaves(v: &TVal, out: &mut Vec<BVal>) {
     match v {
         TVal::Tensor(b) => out.push(b.clone()),
-        TVal::Record(fields) => {
+        TVal::Record(_, fields) => {
             for (_, f) in fields {
                 collect_leaves(f, out);
             }
@@ -737,37 +869,67 @@ fn collect_leaves(v: &TVal, out: &mut Vec<BVal>) {
 fn rebuild(structure: &TVal, grads: &mut std::vec::IntoIter<Val>) -> TVal {
     match structure {
         TVal::Tensor(b) => TVal::Tensor(BVal { val: grads.next().unwrap(), bdims: b.bdims }),
-        TVal::Record(fields) => TVal::Record(
+        TVal::Record(tag, fields) => TVal::Record(
+            tag.clone(),
             fields.iter().map(|(k, f)| (k.clone(), rebuild(f, grads))).collect()
         ),
     }
 }
 
-fn int_lit(e: &Expr, what: &str) -> usize {
-    match e {
-        Expr::Num(n) if n.fract() == 0.0 && *n >= 0.0 => *n as usize,
-        _ => die(&format!("{} must be a non-negative integer literal", what)),
+impl Tracer {
+    fn static_num(&self, name: &str) -> Option<f64> {
+        self.statics.last().and_then(|frame| frame.get(name).copied())
     }
-}
 
-fn num_lit(e: &Expr, what: &str) -> f64 {
-    match e {
-        Expr::Num(n) => *n,
-        Expr::Neg(inner) => match inner.as_ref() {
-            Expr::Num(n) => -*n,
+    fn num_lit(&self, e: &Expr, env: &HashMap<String, TVal>, what: &str) -> f64 {
+        match e {
+            Expr::Num(n) => *n,
+            Expr::Neg(inner) => -self.num_lit(inner, env, what),
+            Expr::Var(s) => {
+                if let Some(v) = env.get(s) {
+                    if let TVal::Tensor(b) = v {
+                        if b.val.shape.is_empty() {
+                            if let OpKind::Constant(n) = self.nodes[b.val.id].kind {
+                                return n;
+                            }
+                        }
+                    }
+                    die(&format!("{} must be a compile-time constant; '{}' is computed at runtime", what, s));
+                }
+                self.static_num(s)
+                    .unwrap_or_else(|| die(&format!("{} must be a number literal", what)))
+            }
             _ => die(&format!("{} must be a number literal", what)),
-        },
-        _ => die(&format!("{} must be a number literal", what)),
+        }
     }
-}
 
-fn axis_arg(e: &Expr, shape: &[usize]) -> usize {
-    let n = match e {
-        Expr::Num(n) => *n,
-        _ => die("reduction axis must be a number literal"),
-    };
-    if n.fract() != 0.0 || n < 0.0 || n as usize >= shape.len() {
-        die(&format!("reduction axis {} out of range for shape {:?}", n, shape));
+    fn int_lit(&self, e: &Expr, env: &HashMap<String, TVal>, what: &str) -> usize {
+        let n = self.num_lit(e, env, what);
+        if n.fract() != 0.0 || n < 0.0 {
+            die(&format!("{} must be a non-negative integer literal", what));
+        }
+        n as usize
     }
-    n as usize
+
+    fn axis_lit(&self, e: &Expr, env: &HashMap<String, TVal>, shape: &[usize]) -> usize {
+        let n = self.num_lit(e, env, "reduction axis");
+        if n.fract() != 0.0 || n < 0.0 || n as usize >= shape.len() {
+            die(&format!("reduction axis {} out of range for shape {:?}", n, shape));
+        }
+        n as usize
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.rng = self.rng.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = self.rng;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^ (z >> 31)
+    }
+
+    fn next_normal(&mut self) -> f64 {
+        let u1 = ((self.next_u64() >> 11) as f64 / (1u64 << 53) as f64).max(1e-12);
+        let u2 = (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64;
+        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+    }
 }

@@ -15,3 +15,8 @@ fn r(x):
   sum(reshape(x, 4) * [1.0, 2.0, 3.0, 4.0])
 
 print(grad(r, [[1.0, 1.0], [1.0, 1.0]]))
+print(linspace(0.0, 1.0, 5))
+half = 0.5
+print(linspace(-half, half, 3))
+n = 4.0
+print(arange(n))

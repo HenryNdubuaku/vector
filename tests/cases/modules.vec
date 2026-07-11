@@ -1,0 +1,63 @@
+module Scale(k):
+  init:
+    {s: 0.0 + k}
+  forward(self, x):
+    self.s * x
+
+sc = Scale(3)
+print(sc([1.0, 2.0]))
+print(sc.s)
+
+fn l(m):
+  sum(m([2.0]))
+
+print(grad(l, sc))
+
+sc2 = sc - 0.5 * grad(l, sc)
+print(sc2.s)
+print(sc2([1.0]))
+
+module Z(n):
+  init:
+    {v: zeros(n)}
+  forward(self, x):
+    self.v + x
+
+z = Z(3)
+print(z(1.0))
+
+module Pair():
+  init:
+    {a: Scale(2), b: Scale(4)}
+  forward(self, x):
+    self.b(self.a(x))
+
+p = Pair()
+print(p([1.0]))
+
+fn pl(m):
+  sum(m([1.0]))
+
+print(grad(pl, p))
+print(sum(randn(2, 2) * 0.0))
+
+module Quad(k):
+  init:
+    {c: 0.0 + k}
+  forward(self, x):
+    self.c * x
+  energy(self):
+    e = self.c - 3.0
+    sum(e * e)
+  scaled_energy(self, w):
+    w * self.energy()
+
+q = Quad(1)
+print(q.energy())
+print(grad(q.energy))
+q2 = q - 0.25 * grad(q.energy)
+print(q2.c)
+print(q2.energy())
+print(q2([2.0]))
+print(q.scaled_energy(2.0))
+print(grad(q.scaled_energy, 2.0))

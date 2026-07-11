@@ -32,7 +32,7 @@ impl Tracer {
         let out = self.val(id);
         let ins: Vec<Val> = node.inputs.iter().map(|&i| self.val(i)).collect();
         match &node.kind {
-            OpKind::Input | OpKind::Iota | OpKind::Constant(_) | OpKind::Compare(_) => vec![],
+            OpKind::Input | OpKind::Iota | OpKind::Constant(_) | OpKind::DenseConst(_) | OpKind::Compare(_) => vec![],
             OpKind::Ewise(name) => match name.as_str() {
                 "add" => vec![(ins[0].id, g.clone()), (ins[1].id, g.clone())],
                 "subtract" => {

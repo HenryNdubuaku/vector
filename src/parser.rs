@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::die;
 use crate::lexer::Tok;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Num(f64),
     Str(String),
@@ -17,21 +17,36 @@ pub enum Expr {
     Let(String, Box<Expr>, Box<Expr>),
     For(String, usize, usize, Vec<(Option<String>, Expr)>, Box<Expr>),
     Call(String, Vec<Expr>),
+    Apply(Box<Expr>, Vec<Expr>),
     Seq(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Op { Add, Sub, Mul, Div }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Decl {
     pub params: Vec<String>,
     pub body: Expr,
 }
 
+#[derive(Debug, Clone)]
+pub struct ModuleDecl {
+    pub params: Vec<String>,
+    pub init: Expr,
+    pub methods: Vec<(String, Decl)>,
+}
+
+impl ModuleDecl {
+    pub fn method(&self, name: &str) -> Option<&Decl> {
+        self.methods.iter().find(|(n, _)| n == name).map(|(_, d)| d)
+    }
+}
+
 #[derive(Debug)]
 pub struct Program {
     pub fns: HashMap<String, Decl>,
+    pub modules: HashMap<String, ModuleDecl>,
     pub main: Expr,
 }
 
@@ -40,6 +55,8 @@ pub struct Parser {
     pub cols: Vec<usize>,
     pub lines: Vec<usize>,
     pub pos: usize,
+    pub fns: HashMap<String, Decl>,
+    pub modules: HashMap<String, ModuleDecl>,
 }
 
 impl Parser {
@@ -76,29 +93,19 @@ impl Parser {
     }
 
     pub fn program(&mut self) -> Program {
-        let mut fns = HashMap::new();
-        let mut mains: Vec<Expr> = Vec::new();
-        while self.peek().is_some() {
-            if matches!(self.peek(), Some(Tok::Fn)) {
-                let (name, decl) = self.decl();
-                if fns.insert(name.clone(), decl).is_some() {
-                    die(&format!("duplicate function: {}", name));
-                }
-            } else {
-                let indent = self.peek_col().unwrap();
-                mains.push(self.body(indent));
-            }
+        if self.peek().is_none() {
+            die("program has no expressions");
         }
-        let main = mains.into_iter()
-            .reduce(join_main)
-            .unwrap_or_else(|| die("program has no expressions"));
-        Program { fns, main }
+        let main = self.body(1);
+        Program {
+            fns: std::mem::take(&mut self.fns),
+            modules: std::mem::take(&mut self.modules),
+            main,
+        }
     }
 
-    fn decl(&mut self) -> (String, Decl) {
-        self.bump();
-        let name = self.ident("function name");
-        self.expect(Tok::LParen, "'(' after function name");
+    fn param_list(&mut self, allow_empty: bool, what: &str) -> Vec<String> {
+        self.expect(Tok::LParen, "'('");
         let mut params = Vec::new();
         if !matches!(self.peek(), Some(Tok::RParen)) {
             params.push(self.ident("parameter"));
@@ -108,16 +115,76 @@ impl Parser {
             }
         }
         self.expect(Tok::RParen, "')' or ','");
-        self.expect(Tok::Colon, "':' after parameters");
-        if params.is_empty() {
-            die(&format!("function {} has no parameters; use a binding for constants", name));
+        if params.is_empty() && !allow_empty {
+            die(&format!("{} has no parameters; use a binding for constants", what));
         }
+        params
+    }
+
+    fn module_decl(&mut self) -> (String, ModuleDecl) {
+        let module_col = self.peek_col().unwrap();
+        self.bump();
+        let name = self.ident("module name");
+        let params = self.param_list(true, &name);
+        self.expect(Tok::Colon, "':' after module parameters");
+        let member_col = self.peek_col().unwrap_or(0);
+        if member_col <= module_col {
+            die(&format!("module {} body must be indented past 'module'", name));
+        }
+        match self.bump() {
+            Some(Tok::Ident(s)) if s == "init" => {}
+            t => die(&format!("expected 'init' block in module {}, got {:?}", name, t)),
+        }
+        self.expect(Tok::Colon, "':' after init");
+        let init_indent = self.peek_col().unwrap_or(1);
+        let init = self.body(init_indent);
+        let mut methods: Vec<(String, Decl)> = Vec::new();
+        while matches!(self.peek(), Some(Tok::Ident(_))) && self.peek_col() == Some(member_col) {
+            let mname = self.ident("method name");
+            if mname == "init" || methods.iter().any(|(n, _)| *n == mname) {
+                die(&format!("duplicate method {} in module {}", mname, name));
+            }
+            let mparams = self.param_list(false, &format!("method {}", mname));
+            self.expect(Tok::Colon, "':' after method parameters");
+            let body_indent = self.peek_col().unwrap_or(1);
+            let body = self.body(body_indent);
+            methods.push((mname, Decl { params: mparams, body }));
+        }
+        if !methods.iter().any(|(n, _)| n == "forward") {
+            die(&format!("module {} must define forward", name));
+        }
+        (name, ModuleDecl { params, init, methods })
+    }
+
+    fn decl(&mut self) -> (String, Decl) {
+        self.bump();
+        let name = self.ident("function name");
+        let params = self.param_list(false, &format!("function {}", name));
+        self.expect(Tok::Colon, "':' after parameters");
         let body_indent = self.peek_col().unwrap_or(1);
         let body = self.body(body_indent);
         (name, Decl { params, body })
     }
 
     fn body(&mut self, indent: usize) -> Expr {
+        loop {
+            match self.peek() {
+                Some(Tok::Fn) => {
+                    let (name, decl) = self.decl();
+                    if self.modules.contains_key(&name) || self.fns.insert(name.clone(), decl).is_some() {
+                        die(&format!("duplicate function: {}", name));
+                    }
+                }
+                Some(Tok::Module) => {
+                    let (name, decl) = self.module_decl();
+                    if self.fns.contains_key(&name) || self.modules.insert(name.clone(), decl).is_some() {
+                        die(&format!("duplicate module: {}", name));
+                    }
+                }
+                None => die("expected an expression after declarations"),
+                _ => break,
+            }
+        }
         if matches!(self.peek(), Some(Tok::For)) {
             return self.for_loop(indent);
         }
@@ -201,7 +268,6 @@ impl Parser {
     fn body_continues(&self, indent: usize) -> bool {
         match self.peek() {
             None => false,
-            Some(Tok::Fn) => false,
             Some(_) => {
                 let curr_line = self.peek_line().unwrap();
                 let curr_col = self.peek_col().unwrap();
@@ -256,10 +322,28 @@ impl Parser {
 
     fn postfix(&mut self) -> Expr {
         let mut e = self.atom();
-        while matches!(self.peek(), Some(Tok::Dot)) {
-            self.bump();
-            let name = self.ident("field name after '.'");
-            e = Expr::Field(Box::new(e), name);
+        loop {
+            if matches!(self.peek(), Some(Tok::Dot)) {
+                self.bump();
+                let name = self.ident("field name after '.'");
+                e = Expr::Field(Box::new(e), name);
+            } else if matches!(self.peek(), Some(Tok::LParen))
+                && self.pos > 0
+                && self.peek_line() == Some(self.lines[self.pos - 1]) {
+                self.bump();
+                let mut args = Vec::new();
+                if !matches!(self.peek(), Some(Tok::RParen)) {
+                    args.push(self.expr());
+                    while matches!(self.peek(), Some(Tok::Comma)) {
+                        self.bump();
+                        args.push(self.expr());
+                    }
+                }
+                self.expect(Tok::RParen, "')' or ','");
+                e = Expr::Apply(Box::new(e), args);
+            } else {
+                break;
+            }
         }
         e
     }
@@ -330,11 +414,3 @@ impl Parser {
     }
 }
 
-fn join_main(a: Expr, b: Expr) -> Expr {
-    match a {
-        Expr::Let(name, value, body) => Expr::Let(name, value, Box::new(join_main(*body, b))),
-        Expr::Seq(first, rest) => Expr::Seq(first, Box::new(join_main(*rest, b))),
-        Expr::For(var, start, end, stmts, rest) => Expr::For(var, start, end, stmts, Box::new(join_main(*rest, b))),
-        other => Expr::Seq(Box::new(other), Box::new(b)),
-    }
-}

@@ -19,6 +19,17 @@ fn join(xs: &[usize]) -> String {
     xs.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ")
 }
 
+fn dense_text(vals: &[f64], shape: &[usize]) -> String {
+    if shape.is_empty() {
+        return mlir_float(vals[0]);
+    }
+    let inner: usize = shape[1..].iter().product::<usize>().max(1);
+    let parts: Vec<String> = (0..shape[0])
+        .map(|i| dense_text(&vals[i * inner..(i + 1) * inner], &shape[1..]))
+        .collect();
+    format!("[{}]", parts.join(", "))
+}
+
 fn node_text(node: &Node, nodes: &[Node]) -> String {
     let t = |i: usize| tensor_type(&nodes[node.inputs[i]].shape, nodes[node.inputs[i]].dtype);
     let arg = |i: usize| format!("%{}", node.inputs[i]);
@@ -27,6 +38,7 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
         OpKind::Input => unreachable!("inputs are function parameters"),
         OpKind::Iota => format!("stablehlo.iota dim = 0 : {}", out),
         OpKind::Constant(n) => format!("stablehlo.constant dense<{}> : {}", mlir_float(*n), out),
+        OpKind::DenseConst(vals) => format!("stablehlo.constant dense<{}> : {}", dense_text(vals, &node.shape), out),
         OpKind::Ewise(name) => format!("stablehlo.{} {}, {} : {}", name, arg(0), arg(1), out),
         OpKind::Unary(name) => format!("stablehlo.{} {} : {}", name, arg(0), out),
         OpKind::Convert => format!("stablehlo.convert {} : ({}) -> {}", arg(0), t(0), out),

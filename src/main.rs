@@ -54,9 +54,23 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>) {
     let src = fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
-    let mut p = Parser { toks: lexed.toks, cols: lexed.cols, lines: lexed.lines, pos: 0 };
+    let mut p = Parser {
+        toks: lexed.toks,
+        cols: lexed.cols,
+        lines: lexed.lines,
+        pos: 0,
+        fns: HashMap::new(),
+        modules: HashMap::new(),
+    };
     let prog = p.program();
-    let mut tracer = Tracer { nodes: Vec::new(), prints: Vec::new(), inputs: Vec::new() };
+    let mut tracer = Tracer {
+        nodes: Vec::new(),
+        prints: Vec::new(),
+        inputs: Vec::new(),
+        modules: prog.modules,
+        statics: Vec::new(),
+        rng: 0x243F6A8885A308D3,
+    };
     tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
     let outputs: Vec<_> = tracer.prints.iter().map(|(_, v)| v.clone()).collect();
     let labels: Vec<Option<String>> = tracer.prints.iter().map(|(l, _)| l.clone()).collect();
