@@ -139,3 +139,51 @@ fn matmul_contraction_mismatch_fails() {
     assert!(!output.status.success());
     assert!(stderr.contains("matmul"), "{}", stderr);
 }
+
+fn run_repl_script(script: &str) -> (String, String) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vector"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.as_mut().unwrap().write_all(script.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    (String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+}
+
+#[test]
+fn repl_persists_state_and_recovers_from_errors() {
+    let (stdout, stderr) = run_repl_script(
+        "x = 2.0\nx * 3.0\ny = [1.0, 2.0] + x\nnope_undefined\ny * y\n",
+    );
+    assert_eq!(stdout, "6 : f32\n[9, 16] : f32\n", "stderr: {}", stderr);
+    assert!(stderr.contains("undefined: nope_undefined"), "{}", stderr);
+}
+
+#[test]
+fn repl_trains_across_chunks() {
+    let script = "\
+fn loss(w):
+  d = w - [3.0, 4.0]
+  mean(d * d)
+
+w = [0.0, 0.0]
+for i in 0..10:
+  w = w - 1.0 * grad(loss, w)
+
+w
+";
+    let (stdout, stderr) = run_repl_script(script);
+    assert_eq!(stdout, "[3, 4] : f32\n", "stderr: {}", stderr);
+}
+
+#[test]
+fn repl_redefines_functions() {
+    let (stdout, _) = run_repl_script(
+        "fn f(x):\n  x * 2.0\n\nsum(f(3.0))\nfn f(x):\n  x * 10.0\n\nsum(f(3.0))\n",
+    );
+    assert_eq!(stdout, "6 : f32\n30 : f32\n");
+}

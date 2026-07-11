@@ -2,13 +2,13 @@ use std::collections::{HashMap, HashSet};
 
 use crate::batch::{collect_leaves, rebuild, tval_sig};
 use crate::die;
-use crate::graph::{BVal, Dtype, Node, OpKind, TVal, Val};
+use crate::graph::{BVal, Dtype, InputSource, Node, OpKind, TVal, Val};
 use crate::parser::{Decl, Expr, ModuleDecl};
 
 pub struct Tracer {
     pub nodes: Vec<Node>,
     pub prints: Vec<(Option<String>, Val)>,
-    pub inputs: Vec<(String, usize)>,
+    pub inputs: Vec<(InputSource, usize)>,
     pub modules: HashMap<String, ModuleDecl>,
     pub statics: Vec<HashMap<String, f64>>,
     pub rng: u64,
@@ -36,6 +36,12 @@ impl Tracer {
         let id = self.nodes.len();
         self.nodes.push(Node { kind, inputs, shape: shape.clone(), dtype });
         Val { id, shape, dtype }
+    }
+
+    pub fn live_input(&mut self, key: String, shape: Vec<usize>, dtype: Dtype) -> Val {
+        let val = self.emit(OpKind::Input, vec![], shape, dtype);
+        self.inputs.push((InputSource::Live(key), val.id));
+        val
     }
 
     pub fn val(&self, id: usize) -> Val {
@@ -120,6 +126,7 @@ impl Tracer {
                 let val = self.constant(*n, Dtype::F32);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
+            Expr::Unit => die("internal: unit expression traced"),
             Expr::Str(_) => die("string literals are only valid as the argument of load"),
             Expr::RecordLit(fields) => {
                 let mut out = Vec::new();
@@ -199,6 +206,49 @@ impl Tracer {
                 TVal::Tensor(self.bcompare(dir, l, r))
             }
             Expr::For(var, start_e, end_e, step_e, stmts, rest) => {
+                let env3 = self.trace_for(var, start_e, end_e, step_e, stmts, env, fns);
+                self.trace(rest, &env3, fns)
+            }
+            Expr::Let(name, value, body) => {
+                let v = self.trace(value, env, fns);
+                let mut env2 = env.clone();
+                env2.insert(name.clone(), v);
+                self.trace(body, &env2, fns)
+            }
+            Expr::Seq(first, rest) => {
+                self.trace(first, env, fns);
+                self.trace(rest, env, fns)
+            }
+            Expr::Call(name, args) => {
+                if let Some(callee) = env.get(name) {
+                    let callee = callee.clone();
+                    let argv: Vec<TVal> = args.iter().map(|a| self.trace(a, env, fns)).collect();
+                    self.call_method(callee, "forward", argv, fns)
+                } else if self.modules.contains_key(name) {
+                    self.instantiate(name, args, env, fns)
+                } else if let Some(decl) = fns.get(name) {
+                    if decl.params.len() != args.len() {
+                        die(&format!("arity mismatch: {} expects {} args, got {}",
+                                     name, decl.params.len(), args.len()));
+                    }
+                    let mut env2 = HashMap::new();
+                    for (param, arg) in decl.params.iter().zip(args.iter()) {
+                        let v = self.trace(arg, env, fns);
+                        env2.insert(param.clone(), v);
+                    }
+                    self.statics.push(HashMap::new());
+                    let out = self.trace(&decl.body, &env2, fns);
+                    self.statics.pop();
+                    out
+                } else {
+                    self.builtin(name, args, env, fns)
+                }
+            }
+        }
+    }
+
+    pub fn trace_for(&mut self, var: &String, start_e: &Expr, end_e: &Expr, step_e: &Option<Box<Expr>>, stmts: &[(Option<String>, Expr)], env: &HashMap<String, TVal>, fns: &HashMap<String, Decl>) -> HashMap<String, TVal> {
+
                 let start = self.num_lit(start_e, env, "range start");
                 let end = self.num_lit(end_e, env, "range end");
                 let step = match step_e {
@@ -238,7 +288,7 @@ impl Tracer {
                     for name in &carried {
                         env3.insert(name.clone(), env2[name].clone());
                     }
-                    return self.trace(rest, &env3, fns);
+                    return env3;
                 }
                 let init_vals: Vec<TVal> = carried.iter().map(|n| env[n].clone()).collect();
                 let init_leaves_per: Vec<Vec<BVal>> = init_vals.iter().map(|v| {
@@ -319,45 +369,9 @@ impl Tracer {
                 for (name, structure) in carried.iter().zip(&init_vals) {
                     env3.insert(name.clone(), rebuild(structure, &mut proj_iter));
                 }
-                self.trace(rest, &env3, fns)
-            }
-            Expr::Let(name, value, body) => {
-                let v = self.trace(value, env, fns);
-                let mut env2 = env.clone();
-                env2.insert(name.clone(), v);
-                self.trace(body, &env2, fns)
-            }
-            Expr::Seq(first, rest) => {
-                self.trace(first, env, fns);
-                self.trace(rest, env, fns)
-            }
-            Expr::Call(name, args) => {
-                if let Some(callee) = env.get(name) {
-                    let callee = callee.clone();
-                    let argv: Vec<TVal> = args.iter().map(|a| self.trace(a, env, fns)).collect();
-                    self.call_method(callee, "forward", argv, fns)
-                } else if self.modules.contains_key(name) {
-                    self.instantiate(name, args, env, fns)
-                } else if let Some(decl) = fns.get(name) {
-                    if decl.params.len() != args.len() {
-                        die(&format!("arity mismatch: {} expects {} args, got {}",
-                                     name, decl.params.len(), args.len()));
-                    }
-                    let mut env2 = HashMap::new();
-                    for (param, arg) in decl.params.iter().zip(args.iter()) {
-                        let v = self.trace(arg, env, fns);
-                        env2.insert(param.clone(), v);
-                    }
-                    self.statics.push(HashMap::new());
-                    let out = self.trace(&decl.body, &env2, fns);
-                    self.statics.pop();
-                    out
-                } else {
-                    self.builtin(name, args, env, fns)
-                }
-            }
-        }
+                env3
     }
+
 
 }
 

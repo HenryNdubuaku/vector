@@ -7,6 +7,7 @@ mod lexer;
 mod linear;
 mod npy;
 mod parser;
+mod repl;
 mod runtime;
 mod trace;
 
@@ -22,15 +23,31 @@ use parser::Parser;
 use runtime::{execute, format_tensor};
 use trace::Tracer;
 
-const USAGE: &str = "usage: vector <file.vec>
+const USAGE: &str = "usage: vector [file.vec]
 
+  vector              start the interactive repl
   vector <file.vec>   compile and run a program
   vector setup        download the PJRT CPU plugin to ~/.vector
   vector version      print version";
 
+struct VectorError(String);
+
 fn die(msg: &str) -> ! {
-    eprintln!("{}", msg);
-    exit(1);
+    std::panic::panic_any(VectorError(msg.to_string()));
+}
+
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        if let Some(VectorError(msg)) = info.payload().downcast_ref::<VectorError>() {
+            eprintln!("{}", msg);
+        } else if let Some(msg) = info.payload().downcast_ref::<&str>() {
+            eprintln!("internal error: {}", msg);
+        } else if let Some(msg) = info.payload().downcast_ref::<String>() {
+            eprintln!("internal error: {}", msg);
+        } else {
+            eprintln!("internal error");
+        }
+    }));
 }
 
 fn home() -> String {
@@ -57,6 +74,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>) {
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
     let mut p = Parser {
+        repl: false,
         toks: lexed.toks,
         cols: lexed.cols,
         lines: lexed.lines,
@@ -83,10 +101,13 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>) {
     let outputs: Vec<_> = tracer.prints.iter().map(|(_, v)| v.clone()).collect();
     let labels: Vec<Option<String>> = tracer.prints.iter().map(|(l, _)| l.clone()).collect();
     let specs: Vec<InputSpec> = tracer.inputs.iter()
-        .map(|&(ref path, id)| InputSpec {
-            path: path.clone(),
-            shape: tracer.nodes[id].shape.clone(),
-            dtype: tracer.nodes[id].dtype,
+        .map(|(src, id)| match src {
+            graph::InputSource::Npy(path) => InputSpec {
+                path: path.clone(),
+                shape: tracer.nodes[*id].shape.clone(),
+                dtype: tracer.nodes[*id].dtype,
+            },
+            graph::InputSource::Live(_) => die("internal: live input outside the repl"),
         })
         .collect();
     (build_module(&tracer, &outputs), specs, labels)
@@ -133,12 +154,19 @@ fn setup() {
 }
 
 fn main() {
+    install_panic_hook();
     let args: Vec<String> = env::args().collect();
-    match args.get(1).map(String::as_str) {
-        Some("setup") if args.len() == 2 => setup(),
-        Some("version") if args.len() == 2 => println!("vector {}", env!("CARGO_PKG_VERSION")),
-        Some("help") => println!("{}", USAGE),
-        Some(path) if args.len() == 2 => run(path),
-        _ => die(USAGE),
+    let outcome = std::panic::catch_unwind(|| {
+        match args.get(1).map(String::as_str) {
+            Some("setup") if args.len() == 2 => setup(),
+            Some("version") if args.len() == 2 => println!("vector {}", env!("CARGO_PKG_VERSION")),
+            Some("help") => println!("{}", USAGE),
+            Some(path) if args.len() == 2 => run(path),
+            None => repl::run_repl(),
+            _ => die(USAGE),
+        }
+    });
+    if outcome.is_err() {
+        exit(1);
     }
 }

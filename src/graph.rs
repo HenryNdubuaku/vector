@@ -32,6 +32,12 @@ pub fn per_shape(v: &BVal) -> Vec<usize> {
 }
 
 #[derive(Debug, Clone)]
+pub enum InputSource {
+    Npy(String),
+    Live(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct ModTag {
     pub module: String,
     pub statics: Vec<(String, f64)>,

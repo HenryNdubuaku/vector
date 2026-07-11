@@ -3,8 +3,60 @@ use std::fs;
 use pjrt::ProgramFormat::MLIR;
 use pjrt::{Buffer, Client, HostBuffer, LoadedExecutable};
 
+use crate::graph::Dtype;
 use crate::npy::{npy_host_buffer, InputSpec};
 use crate::{die, home, plugin_path};
+
+pub struct Engine {
+    plugin_path: String,
+    api: pjrt::Api,
+    client: Client,
+}
+
+impl Engine {
+    pub fn new() -> Engine {
+        let plugin_path = plugin_path();
+        let api = pjrt::plugin(&plugin_path)
+            .load()
+            .unwrap_or_else(|e| die(&format!("cannot load PJRT plugin at {}: {}", plugin_path, e)));
+        let client = Client::builder(&api)
+            .build()
+            .unwrap_or_else(|e| die(&format!("cannot create PJRT client: {}", e)));
+        Engine { plugin_path, api, client }
+    }
+
+    pub fn execute(&self, mlir: &str, feeds: Vec<HostBuffer>) -> Vec<Tensor> {
+        let flags = std::env::var("XLA_FLAGS").unwrap_or_default();
+        let keyed = format!("{}\n{:?}\n{}\n{}", self.plugin_path, self.api.version(), flags, mlir);
+        let executable = load_cached(&self.client, &keyed).unwrap_or_else(|| {
+            let program = pjrt::Program::new(MLIR, mlir.as_bytes());
+            let executable = LoadedExecutable::builder(&self.client, &program)
+                .build()
+                .unwrap_or_else(|e| die(&format!("XLA compilation failed: {}", e)));
+            store_cache(&executable, &keyed);
+            executable
+        });
+        let buffers: Vec<Buffer> = feeds.into_iter()
+            .map(|feed| {
+                feed.to_sync(&self.client)
+                    .copy()
+                    .unwrap_or_else(|e| die(&format!("cannot transfer input to device: {}", e)))
+            })
+            .collect();
+        let results = executable
+            .execution(buffers)
+            .run_sync()
+            .unwrap_or_else(|e| die(&format!("execution failed: {}", e)));
+        results[0]
+            .iter()
+            .map(|b| {
+                let h = b.to_host_sync(None)
+                    .unwrap_or_else(|e| die(&format!("device-to-host transfer failed: {}", e)));
+                host_tensor(h)
+            })
+            .collect()
+    }
+}
 
 fn fnv64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
@@ -55,6 +107,25 @@ pub struct Tensor {
 }
 
 impl Tensor {
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    pub fn graph_dtype(&self) -> Dtype {
+        match &self.data {
+            TensorData::F32(_) => Dtype::F32,
+            TensorData::F64(_) => Dtype::F64,
+        }
+    }
+
+    pub fn to_host_buffer(&self) -> HostBuffer {
+        let dims: Vec<i64> = self.shape.iter().map(|&d| d as i64).collect();
+        match &self.data {
+            TensorData::F32(v) => HostBuffer::from_data(v.clone(), Some(dims), None),
+            TensorData::F64(v) => HostBuffer::from_data(v.clone(), Some(dims), None),
+        }
+    }
+
     fn dtype(&self) -> &'static str {
         match &self.data {
             TensorData::F32(_) => "f32",
@@ -73,42 +144,9 @@ fn host_tensor(h: HostBuffer) -> Tensor {
 }
 
 pub fn execute(mlir: &str, specs: &[InputSpec]) -> Vec<Tensor> {
-    let plugin_path = plugin_path();
-    let api = pjrt::plugin(&plugin_path)
-        .load()
-        .unwrap_or_else(|e| die(&format!("cannot load PJRT plugin at {}: {}", plugin_path, e)));
-    let client = Client::builder(&api)
-        .build()
-        .unwrap_or_else(|e| die(&format!("cannot create PJRT client: {}", e)));
-    let keyed = format!("{}\n{:?}\n{}", plugin_path, api.version(), mlir);
-    let executable = load_cached(&client, &keyed).unwrap_or_else(|| {
-        let program = pjrt::Program::new(MLIR, mlir.as_bytes());
-        let executable = LoadedExecutable::builder(&client, &program)
-            .build()
-            .unwrap_or_else(|e| die(&format!("XLA compilation failed: {}", e)));
-        store_cache(&executable, &keyed);
-        executable
-    });
-    let buffers: Vec<Buffer> = specs.iter()
-        .map(|spec| {
-            npy_host_buffer(spec)
-                .to_sync(&client)
-                .copy()
-                .unwrap_or_else(|e| die(&format!("cannot transfer {} to device: {}", spec.path, e)))
-        })
-        .collect();
-    let results = executable
-        .execution(buffers)
-        .run_sync()
-        .unwrap_or_else(|e| die(&format!("execution failed: {}", e)));
-    results[0]
-        .iter()
-        .map(|b| {
-            let h = b.to_host_sync(None)
-                .unwrap_or_else(|e| die(&format!("device-to-host transfer failed: {}", e)));
-            host_tensor(h)
-        })
-        .collect()
+    let engine = Engine::new();
+    let feeds: Vec<HostBuffer> = specs.iter().map(npy_host_buffer).collect();
+    engine.execute(mlir, feeds)
 }
 
 fn format_typed<T: std::fmt::Display>(data: &[T], shape: &[usize]) -> String {

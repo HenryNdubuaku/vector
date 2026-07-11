@@ -40,7 +40,6 @@ Loops (`for i in 0..n:`) unroll at trace time, so gradients flow through them; `
 
 ## TO-DO:
 
-- fusion 
 - export/load model 
 - plot 
 - different backends

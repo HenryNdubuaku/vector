@@ -5,6 +5,7 @@ use crate::lexer::Tok;
 
 #[derive(Debug, Clone)]
 pub enum Expr {
+    Unit,
     Num(f64),
     Str(String),
     Arr(Vec<Expr>),
@@ -51,6 +52,7 @@ pub struct Program {
 }
 
 pub struct Parser {
+    pub repl: bool,
     pub toks: Vec<Tok>,
     pub cols: Vec<usize>,
     pub lines: Vec<usize>,
@@ -175,17 +177,24 @@ impl Parser {
             match self.peek() {
                 Some(Tok::Fn) => {
                     let (name, decl) = self.decl();
-                    if self.modules.contains_key(&name) || self.fns.insert(name.clone(), decl).is_some() {
+                    if !self.repl && (self.modules.contains_key(&name) || self.fns.contains_key(&name)) {
                         die(&format!("duplicate function: {}", name));
                     }
+                    self.fns.insert(name, decl);
                 }
                 Some(Tok::Module) => {
                     let (name, decl) = self.module_decl();
-                    if self.fns.contains_key(&name) || self.modules.insert(name.clone(), decl).is_some() {
+                    if !self.repl && (self.fns.contains_key(&name) || self.modules.contains_key(&name)) {
                         die(&format!("duplicate module: {}", name));
                     }
+                    self.modules.insert(name, decl);
                 }
-                None => die("expected an expression after declarations"),
+                None => {
+                    if self.repl {
+                        return Expr::Unit;
+                    }
+                    die("expected an expression after declarations");
+                }
                 _ => break,
             }
         }
@@ -200,6 +209,9 @@ impl Parser {
                 if self.body_continues(indent) {
                     let rest = self.body(indent);
                     return Expr::Let(name, Box::new(value), Box::new(rest));
+                }
+                if self.repl {
+                    return Expr::Let(name, Box::new(value), Box::new(Expr::Unit));
                 }
                 die(&format!("binding {} has no body expression", name));
             }
@@ -249,6 +261,9 @@ impl Parser {
             break;
         }
         if !self.body_continues(indent) {
+            if self.repl {
+                return Expr::For(var, start, end, step, stmts, Box::new(Expr::Unit));
+            }
             die("for loop must be followed by an expression");
         }
         let rest = self.body(indent);

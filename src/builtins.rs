@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::batch::{collect_leaves, rebuild};
 use crate::die;
-use crate::graph::{broadcast_shape, per_shape, BVal, Dtype, ModTag, OpKind, TVal, Val};
+use crate::graph::{broadcast_shape, per_shape, BVal, Dtype, InputSource, ModTag, OpKind, TVal, Val};
 use crate::npy::npy_meta;
 use crate::parser::{Decl, Expr};
 use crate::trace::Tracer;
@@ -294,12 +294,13 @@ impl Tracer {
                     Expr::Str(s) => s.clone(),
                     _ => die("load expects a file path string literal"),
                 };
-                if let Some(&(_, id)) = self.inputs.iter().find(|(p, _)| *p == path) {
+                if let Some(&(_, id)) = self.inputs.iter()
+                    .find(|(src, _)| matches!(src, InputSource::Npy(p) if *p == path)) {
                     return TVal::Tensor(BVal { val: self.val(id), bdims: 0 });
                 }
                 let (shape, dtype, _) = npy_meta(&path);
                 let val = self.emit(OpKind::Input, vec![], shape, dtype);
-                self.inputs.push((path, val.id));
+                self.inputs.push((InputSource::Npy(path), val.id));
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
             "matmul" => {

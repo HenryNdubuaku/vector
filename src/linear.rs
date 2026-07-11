@@ -19,6 +19,7 @@ pub fn stdlib_modules() -> HashMap<String, ModuleDecl> {
     let src = format!("{}\n0.0\n", SOURCE);
     let lexed = lex(&src);
     let mut p = Parser {
+        repl: false,
         toks: lexed.toks,
         cols: lexed.cols,
         lines: lexed.lines,
