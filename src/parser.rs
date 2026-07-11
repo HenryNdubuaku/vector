@@ -33,7 +33,7 @@ pub struct Decl {
 #[derive(Debug, Clone)]
 pub struct ModuleDecl {
     pub params: Vec<String>,
-    pub init: Expr,
+    pub init: Vec<(String, Expr)>,
     pub methods: Vec<(String, Decl)>,
 }
 
@@ -131,24 +131,28 @@ impl Parser {
         if member_col <= module_col {
             die(&format!("module {} body must be indented past 'module'", name));
         }
-        match self.bump() {
-            Some(Tok::Ident(s)) if s == "init" => {}
-            t => die(&format!("expected 'init' block in module {}, got {:?}", name, t)),
-        }
-        self.expect(Tok::Colon, "':' after init");
-        let init_indent = self.peek_col().unwrap_or(1);
-        let init = self.body(init_indent);
+        let mut init: Vec<(String, Expr)> = Vec::new();
         let mut methods: Vec<(String, Decl)> = Vec::new();
         while matches!(self.peek(), Some(Tok::Ident(_))) && self.peek_col() == Some(member_col) {
-            let mname = self.ident("method name");
-            if mname == "init" || methods.iter().any(|(n, _)| *n == mname) {
-                die(&format!("duplicate method {} in module {}", mname, name));
+            let mname = self.ident("module member");
+            if matches!(self.peek(), Some(Tok::Eq)) {
+                self.bump();
+                if methods.iter().any(|(n, _)| *n == mname) {
+                    die(&format!("module {} member {} is both a method and a field", name, mname));
+                }
+                init.push((mname, self.expr()));
+            } else if matches!(self.peek(), Some(Tok::LParen)) {
+                if methods.iter().any(|(n, _)| *n == mname) || init.iter().any(|(n, _)| *n == mname) {
+                    die(&format!("duplicate module member {} in {}", mname, name));
+                }
+                let mparams = self.param_list(false, &format!("method {}", mname));
+                self.expect(Tok::Colon, "':' after method parameters");
+                let body_indent = self.peek_col().unwrap_or(1);
+                let body = self.body(body_indent);
+                methods.push((mname, Decl { params: mparams, body }));
+            } else {
+                die(&format!("expected '=' or '(' after {} in module {}", mname, name));
             }
-            let mparams = self.param_list(false, &format!("method {}", mname));
-            self.expect(Tok::Colon, "':' after method parameters");
-            let body_indent = self.peek_col().unwrap_or(1);
-            let body = self.body(body_indent);
-            methods.push((mname, Decl { params: mparams, body }));
         }
         if !methods.iter().any(|(n, _)| n == "forward") {
             die(&format!("module {} must define forward", name));

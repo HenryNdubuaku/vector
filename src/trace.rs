@@ -201,14 +201,18 @@ impl Tracer {
             .map(|(p, a)| (p.clone(), self.num_lit(a, env, &format!("module {} argument", name))))
             .collect();
         self.statics.push(statics.iter().cloned().collect());
-        let inited = self.trace(&decl.init, &HashMap::new(), fns);
-        self.statics.pop();
-        match inited {
-            TVal::Record(_, fields) => {
-                TVal::Record(Some(ModTag { module: name.to_string(), statics }), fields)
+        let mut env2: HashMap<String, TVal> = HashMap::new();
+        let mut fields: Vec<(String, TVal)> = Vec::new();
+        for (fname, expr) in &decl.init {
+            let v = self.trace(expr, &env2, fns);
+            env2.insert(fname.clone(), v.clone());
+            match fields.iter_mut().find(|(k, _)| k == fname) {
+                Some(field) => field.1 = v,
+                None => fields.push((fname.clone(), v)),
             }
-            TVal::Tensor(_) => die(&format!("module {} init must produce a record", name)),
         }
+        self.statics.pop();
+        TVal::Record(Some(ModTag { module: name.to_string(), statics }), fields)
     }
 
     fn call_method(&mut self, callee: TVal, method: &str, args: Vec<TVal>, fns: &HashMap<String, Decl>) -> TVal {

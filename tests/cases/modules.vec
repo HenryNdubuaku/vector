@@ -1,6 +1,5 @@
 module Scale(k):
-  init:
-    {s: 0.0 + k}
+  s = 0.0 + k
   forward(self, x):
     self.s * x
 
@@ -18,8 +17,7 @@ print(sc2.s)
 print(sc2([1.0]))
 
 module Z(n):
-  init:
-    {v: zeros(n)}
+  v = zeros(n)
   forward(self, x):
     self.v + x
 
@@ -27,8 +25,8 @@ z = Z(3)
 print(z(1.0))
 
 module Pair():
-  init:
-    {a: Scale(2), b: Scale(4)}
+  a = Scale(2)
+  b = Scale(4)
   forward(self, x):
     self.b(self.a(x))
 
@@ -42,8 +40,7 @@ print(grad(pl, p))
 print(sum(randn(2, 2) * 0.0))
 
 module Quad(k):
-  init:
-    {c: 0.0 + k}
+  c = 0.0 + k
   forward(self, x):
     self.c * x
   energy(self):

@@ -12,16 +12,20 @@ eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
 eval_targets = sin(eval_inputs)
 
 module Dense(in_size, out_size):
-  init:
-    {w: randn(in_size, out_size), b: randn(out_size)}
+  w = randn(in_size, out_size)
+  b = randn(out_size)
+  
   forward(self, x):
     matmul(x, self.w) + self.b
 
+
 module Mlp(hidden):
-  init:
-    {l1: Dense(1, hidden), l2: Dense(hidden, 1)}
+  l1 = Dense(1, hidden)
+  l2 = Dense(hidden, 1)
+
   forward(self, x):
     self.l2(tanh(self.l1(x)))
+
   loss(self, inputs, targets):
     error = self(inputs) - targets
     mean(error * error)
