@@ -1,3 +1,5 @@
+mod batch;
+mod builtins;
 mod emit;
 mod grad;
 mod graph;
