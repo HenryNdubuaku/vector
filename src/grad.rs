@@ -111,6 +111,7 @@ impl Tracer {
                 vec![(ins[0].id, da)]
             }
             OpKind::Reshape => vec![(ins[0].id, self.reshape(g, ins[0].shape.clone()))],
+            OpKind::Barrier => vec![(ins[0].id, g.clone())],
             OpKind::Concat(dim) => {
                 let mut contribs = Vec::new();
                 let mut offset = 0;

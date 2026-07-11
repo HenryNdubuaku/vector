@@ -36,3 +36,12 @@ vector build filename.vec > filename.mlir
 `load` reads `.npy` files (little-endian f32/f64, C order); the tensor becomes a runtime input to the compiled program, so shapes stay static. 
 Output comes only from `print`. Transforms: `grad`, `vmap` (nestable), `jacobian`. 
 Loops (`for i in 0..n:`) unroll at trace time, so gradients flow through them; `where(cond, a, b)` selects elementwise with comparisons `< > <= >=`.
+
+
+## TO-DO:
+
+- optimize 
+- fusion 
+- export/load model 
+- plot 
+- different backends

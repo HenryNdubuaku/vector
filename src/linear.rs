@@ -67,7 +67,7 @@ impl Tracer {
             }
             _ => die(&format!("unknown initializer: {}", name)),
         };
-        let val = self.emit(OpKind::DenseConst(vals), vec![], vec![fan_in, fan_out], Dtype::F64);
+        let val = self.emit(OpKind::DenseConst(vals), vec![], vec![fan_in, fan_out], Dtype::F32);
         TVal::Tensor(BVal { val, bdims: 0 })
     }
 }

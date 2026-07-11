@@ -21,3 +21,23 @@ state = {v: [1.0, 2.0], scale: 2.0}
 for i in 0..3:
   state = state * state.scale / 2.0 + {v: [1.0, 1.0], scale: 1.0} * 0.0 + state * 0.0 + state
 print(state.v)
+acc = 0.0
+for i in 0..10 by 2:
+  acc = acc + i
+print(acc)
+
+for i in 5..0 by -1:
+  acc = acc + i
+print(acc)
+
+for x in 0.0..1.0 by 0.25:
+  acc = acc + x
+print(acc)
+
+fn f(v):
+  y = v
+  for i in 0..4 by 2:
+    y = y * 2.0
+  sum(y)
+
+print(grad(f, [3.0]))

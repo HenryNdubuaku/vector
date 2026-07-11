@@ -15,7 +15,7 @@ pub enum Expr {
     Bin(Op, Box<Expr>, Box<Expr>),
     Cmp(String, Box<Expr>, Box<Expr>),
     Let(String, Box<Expr>, Box<Expr>),
-    For(String, Box<Expr>, Box<Expr>, Vec<(Option<String>, Expr)>, Box<Expr>),
+    For(String, Box<Expr>, Box<Expr>, Option<Box<Expr>>, Vec<(Option<String>, Expr)>, Box<Expr>),
     Call(String, Vec<Expr>),
     Apply(Box<Expr>, Vec<Expr>),
     Seq(Box<Expr>, Box<Expr>),
@@ -221,6 +221,13 @@ impl Parser {
         let start = Box::new(self.unary());
         self.expect(Tok::DotDot, "'..' in range");
         let end = Box::new(self.unary());
+        let step = match self.peek() {
+            Some(Tok::Ident(s)) if s == "by" && self.same_line() => {
+                self.bump();
+                Some(Box::new(self.unary()))
+            }
+            _ => None,
+        };
         self.expect(Tok::Colon, "':' after range");
         let body_col = self.peek_col().unwrap_or(0);
         if body_col <= for_col {
@@ -245,7 +252,7 @@ impl Parser {
             die("for loop must be followed by an expression");
         }
         let rest = self.body(indent);
-        Expr::For(var, start, end, stmts, Box::new(rest))
+        Expr::For(var, start, end, step, stmts, Box::new(rest))
     }
 
     fn same_line(&self) -> bool {

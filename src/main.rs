@@ -76,6 +76,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>) {
         claimed: std::collections::HashSet::new(),
         region_depth: 0,
         grad_depth: 0,
+        interned: vec![HashMap::new()],
     };
     tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
     let outputs: Vec<_> = tracer.prints.iter().map(|(_, v)| v.clone()).collect();

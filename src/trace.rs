@@ -15,10 +15,24 @@ pub struct Tracer {
     pub claimed: HashSet<usize>,
     pub region_depth: usize,
     pub grad_depth: usize,
+    pub interned: Vec<HashMap<String, usize>>,
 }
 
 impl Tracer {
     pub fn emit(&mut self, kind: OpKind, inputs: Vec<usize>, shape: Vec<usize>, dtype: Dtype) -> Val {
+        let internable = !matches!(kind, OpKind::Input | OpKind::IterArg | OpKind::Proj(_) | OpKind::Barrier | OpKind::While { .. });
+        if internable {
+            let key = format!("{:?}|{:?}|{:?}|{:?}", kind, inputs, shape, dtype);
+            for frame in self.interned.iter().rev() {
+                if let Some(&id) = frame.get(&key) {
+                    return self.val(id);
+                }
+            }
+            let id = self.nodes.len();
+            self.nodes.push(Node { kind, inputs, shape: shape.clone(), dtype });
+            self.interned.last_mut().unwrap().insert(key, id);
+            return Val { id, shape, dtype };
+        }
         let id = self.nodes.len();
         self.nodes.push(Node { kind, inputs, shape: shape.clone(), dtype });
         Val { id, shape, dtype }
@@ -169,6 +183,23 @@ impl Tracer {
                 let mut out = Vec::new();
                 for (k, f) in fields {
                     let r = self.tconvert(f, dtype);
+                    out.push((k.clone(), r));
+                }
+                TVal::Record(tag.clone(), out)
+            }
+        }
+    }
+
+    fn barrier_tval(&mut self, v: &TVal) -> TVal {
+        match v {
+            TVal::Tensor(b) => {
+                let val = self.emit(OpKind::Barrier, vec![b.val.id], b.val.shape.clone(), b.val.dtype);
+                TVal::Tensor(BVal { val, bdims: b.bdims })
+            }
+            TVal::Record(tag, fields) => {
+                let mut out = Vec::new();
+                for (k, f) in fields {
+                    let r = self.barrier_tval(f);
                     out.push((k.clone(), r));
                 }
                 TVal::Record(tag.clone(), out)
@@ -366,6 +397,31 @@ impl Tracer {
                 die(&format!("array literal has inconsistent dtypes: {} vs {}", dtype.name(), v.val.dtype.name()));
             }
         }
+        let mut const_vals: Option<Vec<f64>> = Some(Vec::new());
+        for v in &vals {
+            if v.bdims != 0 {
+                const_vals = None;
+                break;
+            }
+            match &self.nodes[v.val.id].kind {
+                OpKind::Constant(n) => {
+                    const_vals.as_mut().unwrap().push(*n);
+                }
+                OpKind::DenseConst(vs) => {
+                    const_vals.as_mut().unwrap().extend(vs.iter().copied());
+                }
+                _ => {
+                    const_vals = None;
+                    break;
+                }
+            }
+        }
+        if let Some(cv) = const_vals {
+            let mut shape = vec![vals.len()];
+            shape.extend(&inner_shape);
+            let val = self.emit(OpKind::DenseConst(cv), vec![], shape, dtype);
+            return BVal { val, bdims: 0 };
+        }
         let deepest = vals.iter().max_by_key(|v| v.bdims).unwrap();
         let prefix: Vec<usize> = deepest.val.shape[..deepest.bdims].to_vec();
         let k = prefix.len();
@@ -391,7 +447,7 @@ impl Tracer {
     pub fn trace(&mut self, e: &Expr, env: &HashMap<String, TVal>, fns: &HashMap<String, Decl>) -> TVal {
         match e {
             Expr::Num(n) => {
-                let val = self.constant(*n, Dtype::F64);
+                let val = self.constant(*n, Dtype::F32);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
             Expr::Str(_) => die("string literals are only valid as the argument of load"),
@@ -454,7 +510,7 @@ impl Tracer {
                 if let Some(v) = env.get(s) {
                     v.clone()
                 } else if let Some(n) = self.static_num(s).or_else(|| named_const(s)) {
-                    let val = self.constant(n, Dtype::F64);
+                    let val = self.constant(n, Dtype::F32);
                     TVal::Tensor(BVal { val, bdims: 0 })
                 } else if fns.contains_key(s) {
                     die(&format!("'{}' is a function; first-class functions aren't supported yet", s));
@@ -472,9 +528,16 @@ impl Tracer {
                 let r = self.trace(r, env, fns).tensor("comparison operand");
                 TVal::Tensor(self.bcompare(dir, l, r))
             }
-            Expr::For(var, start_e, end_e, stmts, rest) => {
-                let start = self.int_lit(start_e, env, "range start");
-                let end = self.int_lit(end_e, env, "range end");
+            Expr::For(var, start_e, end_e, step_e, stmts, rest) => {
+                let start = self.num_lit(start_e, env, "range start");
+                let end = self.num_lit(end_e, env, "range end");
+                let step = match step_e {
+                    Some(e) => self.num_lit(e, env, "range step"),
+                    None => 1.0,
+                };
+                if step == 0.0 {
+                    die("range step must be nonzero");
+                }
                 let mut carried: Vec<String> = Vec::new();
                 for (name, _) in stmts {
                     if let Some(n) = name {
@@ -487,10 +550,11 @@ impl Tracer {
                     }
                 }
                 if self.grad_depth > 0 {
+                    let iterations = (((end - start) / step).ceil().max(0.0)) as usize;
                     let mut env2 = env.clone();
                     self.region_depth += 1;
-                    for k in start..end {
-                        let kv = self.constant(k as f64, Dtype::F64);
+                    for k in 0..iterations {
+                        let kv = self.constant(start + k as f64 * step, Dtype::F32);
                         env2.insert(var.clone(), TVal::Tensor(BVal { val: kv, bdims: 0 }));
                         for (name, stmt) in stmts {
                             let v = self.trace(stmt, &env2, fns);
@@ -513,10 +577,11 @@ impl Tracer {
                     l
                 }).collect();
 
-                let limit = self.constant(end as f64, Dtype::F64);
-                let counter_init = self.constant(start as f64, Dtype::F64);
+                let limit = self.constant(end, Dtype::F64);
+                let counter_init = self.constant(start, Dtype::F64);
 
                 let body_start = self.nodes.len();
+                self.interned.push(HashMap::new());
                 let counter_arg = self.emit(OpKind::IterArg, vec![], vec![], Dtype::F64);
                 let arg_leaves: Vec<BVal> = init_leaves_per.iter().flatten().map(|b| {
                     let val = self.emit(OpKind::IterArg, vec![], b.val.shape.clone(), b.val.dtype);
@@ -524,7 +589,8 @@ impl Tracer {
                 }).collect();
 
                 let mut env2 = env.clone();
-                env2.insert(var.clone(), TVal::Tensor(BVal { val: counter_arg.clone(), bdims: 0 }));
+                let var_view = self.convert(&counter_arg, Dtype::F32);
+                env2.insert(var.clone(), TVal::Tensor(BVal { val: var_view, bdims: 0 }));
                 let mut arg_iter = arg_leaves.iter().map(|b| b.val.clone()).collect::<Vec<_>>().into_iter();
                 for (name, structure) in carried.iter().zip(&init_vals) {
                     env2.insert(name.clone(), rebuild(structure, &mut arg_iter));
@@ -539,8 +605,8 @@ impl Tracer {
                 }
                 self.region_depth -= 1;
 
-                let one = self.constant(1.0, Dtype::F64);
-                let next_counter = self.ewise("add", counter_arg.clone(), one);
+                let step_c = self.constant(step, Dtype::F64);
+                let next_counter = self.ewise("add", counter_arg.clone(), step_c);
 
                 let mut results = vec![next_counter.id];
                 for (name, structure) in carried.iter().zip(&init_vals) {
@@ -558,14 +624,16 @@ impl Tracer {
                     .filter(|id| !self.claimed.contains(id))
                     .collect();
                 self.claimed.extend(body.iter().copied());
+                self.interned.pop();
 
                 let mut iter_args = vec![counter_arg.id];
                 iter_args.extend(arg_leaves.iter().map(|b| b.val.id));
                 let mut inputs = vec![counter_init.id];
                 inputs.extend(init_leaves_per.iter().flatten().map(|b| b.val.id));
 
+                let dir = if step > 0.0 { "LT" } else { "GT" };
                 let w = self.emit(
-                    OpKind::While { iter_args, results, body, limit: limit.id },
+                    OpKind::While { iter_args, results, body, limit: limit.id, dir: dir.to_string() },
                     inputs,
                     vec![],
                     Dtype::F64,
@@ -769,10 +837,10 @@ impl Tracer {
                 if count <= 0.0 {
                     die(&format!("arange({}, {}, {}) is empty", start, stop, step));
                 }
-                let indices = self.emit(OpKind::Iota, vec![], vec![count as usize], Dtype::F64);
-                let step_c = self.constant(step, Dtype::F64);
+                let indices = self.emit(OpKind::Iota, vec![], vec![count as usize], Dtype::F32);
+                let step_c = self.constant(step, Dtype::F32);
                 let scaled = self.ewise("multiply", indices, step_c);
-                let start_c = self.constant(start, Dtype::F64);
+                let start_c = self.constant(start, Dtype::F32);
                 let val = self.ewise("add", scaled, start_c);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
@@ -787,10 +855,10 @@ impl Tracer {
                     die("linspace count must be at least 1");
                 }
                 let step = if count == 1 { 0.0 } else { (stop - start) / (count - 1) as f64 };
-                let indices = self.emit(OpKind::Iota, vec![], vec![count], Dtype::F64);
-                let step_c = self.constant(step, Dtype::F64);
+                let indices = self.emit(OpKind::Iota, vec![], vec![count], Dtype::F32);
+                let step_c = self.constant(step, Dtype::F32);
                 let scaled = self.ewise("multiply", indices, step_c);
-                let start_c = self.constant(start, Dtype::F64);
+                let start_c = self.constant(start, Dtype::F32);
                 let val = self.ewise("add", scaled, start_c);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
@@ -823,12 +891,12 @@ impl Tracer {
                 }
                 let dims: Vec<usize> = args.iter().map(|a| self.int_lit(a, env, "dimension")).collect();
                 if name == "zeros" {
-                    let val = self.zeros(&dims, Dtype::F64);
+                    let val = self.zeros(&dims, Dtype::F32);
                     return TVal::Tensor(BVal { val, bdims: 0 });
                 }
                 let count: usize = dims.iter().product();
                 let vals: Vec<f64> = (0..count).map(|_| self.next_normal()).collect();
-                let val = self.emit(OpKind::DenseConst(vals), vec![], dims, Dtype::F64);
+                let val = self.emit(OpKind::DenseConst(vals), vec![], dims, Dtype::F32);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
             "mod" => {
@@ -877,6 +945,7 @@ impl Tracer {
             "grad" => {
                 let (fname, target, traced) = if let Some(Expr::Field(obj, mname)) = args.first() {
                     let inst = self.trace(obj, env, fns);
+                    let inst = self.barrier_tval(&inst);
                     let extras: Vec<TVal> = args[1..].iter().map(|a| self.trace(a, env, fns)).collect();
                     self.grad_depth += 1;
                     let out = self.call_method(inst.clone(), mname, extras, fns);
@@ -884,8 +953,10 @@ impl Tracer {
                     (format!(".{}", mname), inst, out)
                 } else {
                     let (fname, decl, vals) = self.transform_args("grad", args, env, fns);
+                    let target = self.barrier_tval(&vals[0]);
                     let mut env2 = HashMap::new();
-                    for (param, v) in decl.params.iter().zip(&vals) {
+                    env2.insert(decl.params[0].clone(), target.clone());
+                    for (param, v) in decl.params[1..].iter().zip(vals[1..].iter()) {
                         env2.insert(param.clone(), v.clone());
                     }
                     self.statics.push(HashMap::new());
@@ -893,7 +964,7 @@ impl Tracer {
                     let out = self.trace(&decl.body, &env2, fns);
                     self.grad_depth -= 1;
                     self.statics.pop();
-                    (fname, vals.into_iter().next().unwrap(), out)
+                    (fname, target, out)
                 };
                 let y = match traced {
                     TVal::Tensor(b) => b,
@@ -952,7 +1023,8 @@ impl Tracer {
                 TVal::Tensor(BVal { val, bdims: k })
             }
             "jacobian" => {
-                let (fname, decl, vals) = self.transform_args("jacobian", args, env, fns);
+                let (fname, decl, mut vals) = self.transform_args("jacobian", args, env, fns);
+                vals[0] = self.barrier_tval(&vals[0].clone());
                 let mut env2 = HashMap::new();
                 for (param, v) in decl.params.iter().zip(&vals) {
                     env2.insert(param.clone(), v.clone());

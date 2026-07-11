@@ -3,7 +3,7 @@ fn loss(w):
   d = w - ys
   mean(d * d)
 
-w = [0.0, 0.0]
+w = f64([0.0, 0.0])
 for step in 0..10:
   w = w - 1.0 * grad(loss, w)
 print(w)

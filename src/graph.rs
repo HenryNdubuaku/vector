@@ -85,11 +85,13 @@ pub enum OpKind {
     DynUpdateSlice,
     IterArg,
     Proj(usize),
+    Barrier,
     While {
         iter_args: Vec<usize>,
         results: Vec<usize>,
         body: Vec<usize>,
         limit: usize,
+        dir: String,
     },
 }
 

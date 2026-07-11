@@ -35,6 +35,7 @@ fn dense_text(vals: &[f64], shape: &[usize]) -> String {
 
 fn val_name(id: usize, nodes: &[Node]) -> String {
     match &nodes[id].kind {
+        OpKind::Barrier => val_name(nodes[id].inputs[0], nodes),
         OpKind::Proj(k) => {
             let w = nodes[id].inputs[0];
             let count = match &nodes[w].kind {
@@ -55,12 +56,17 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
         OpKind::Input => unreachable!("inputs are function parameters"),
         OpKind::IterArg => unreachable!("iter args are while binders"),
         OpKind::Proj(_) => unreachable!("projections are name aliases"),
+        OpKind::Barrier => unreachable!("barriers are name aliases"),
         OpKind::While { .. } => unreachable!("while is emitted by the region writer"),
         OpKind::Iota => format!("stablehlo.iota dim = 0 : {}", out),
-        OpKind::Constant(n) => match node.dtype {
-            Dtype::I64 => format!("stablehlo.constant dense<{}> : {}", *n as i64, out),
-            _ => format!("stablehlo.constant dense<{}> : {}", mlir_float(*n), out),
-        },
+        OpKind::Constant(n) => {
+            let lit = match node.dtype {
+                Dtype::I64 => format!("{}", *n as i64),
+                Dtype::F32 if !n.is_finite() => format!("0x{:08X}", (*n as f32).to_bits()),
+                _ => mlir_float(*n),
+            };
+            format!("stablehlo.constant dense<{}> : {}", lit, out)
+        }
         OpKind::DenseConst(vals) => format!("stablehlo.constant dense<{}> : {}", dense_text(vals, &node.shape), out),
         OpKind::Ewise(name) => format!("stablehlo.{} {}, {} : {}", name, arg(0), arg(1), out),
         OpKind::Unary(name) => format!("stablehlo.{} {} : {}", name, arg(0), out),
@@ -128,7 +134,7 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
 }
 
 fn write_while(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
-    let OpKind::While { iter_args, results, body, limit } = &nodes[id].kind else {
+    let OpKind::While { iter_args, results, body, limit, dir } = &nodes[id].kind else {
         unreachable!()
     };
     let ind = " ".repeat(indent);
@@ -146,8 +152,8 @@ fn write_while(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
     s.push_str(&format!("{}{} = stablehlo.while({}) : {}\n", ind, head, binders.join(", "), types.join(", ")));
     s.push_str(&format!("{} cond {{\n", ind));
     s.push_str(&format!(
-        "{}  %c{} = stablehlo.compare LT, %{}, {} : (tensor<f64>, tensor<f64>) -> tensor<i1>\n",
-        ind, id, iter_args[0], val_name(*limit, nodes)
+        "{}  %c{} = stablehlo.compare {}, %{}, {} : (tensor<f64>, tensor<f64>) -> tensor<i1>\n",
+        ind, id, dir, iter_args[0], val_name(*limit, nodes)
     ));
     s.push_str(&format!("{}  stablehlo.return %c{} : tensor<i1>\n", ind, id));
     s.push_str(&format!("{} }} do {{\n", ind));
@@ -160,7 +166,7 @@ fn write_while(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
 fn write_region(s: &mut String, ids: &[usize], nodes: &[Node], indent: usize) {
     for &id in ids {
         match &nodes[id].kind {
-            OpKind::Input | OpKind::IterArg | OpKind::Proj(_) => {}
+            OpKind::Input | OpKind::IterArg | OpKind::Proj(_) | OpKind::Barrier => {}
             OpKind::While { .. } => write_while(s, id, nodes, indent),
             _ => {
                 s.push_str(&" ".repeat(indent));
