@@ -4,20 +4,18 @@ Programming language for machine learning, compiled to XLA.
 
 Programs are traced to StableHLO and executed through a PJRT plugin — there is no interpreter.
 
-## Setup
-
-Requires `protoc` (`brew install protobuf`) and a PJRT CPU plugin:
+## Install
 
 ```sh
-mkdir -p plugins && cd plugins
-gh release download -R zml/pjrt-artifacts -p 'pjrt-cpu_darwin-arm64.tar.gz'
-tar xzf pjrt-cpu_darwin-arm64.tar.gz && rm pjrt-cpu_darwin-arm64.tar.gz
+cargo install --path .
+vector setup
 ```
 
-The runtime loads `plugins/libpjrt_cpu.dylib` by default; override with `PJRT_PLUGIN_PATH`.
+Building from source requires `protoc` (`brew install protobuf`). `vector setup` downloads the PJRT CPU plugin for your platform into `~/.vector`; set `PJRT_PLUGIN_PATH` to use a different plugin.
 
-## Run
+## Use
 
 ```sh
-cargo run -- examples/hello.vec
+vector run examples/hello.vec
+vector build examples/hello.vec > hello.mlir
 ```

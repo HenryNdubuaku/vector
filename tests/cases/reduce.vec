@@ -1,0 +1,6 @@
+m = [[1.0, 2.0], [3.0, 4.0]]
+print(sum(m))
+print(sum(m, 0))
+print(sum(m, 1))
+print(mean(m))
+print(mean(m, 1))

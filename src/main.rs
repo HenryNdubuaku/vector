@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::process::exit;
+use std::process::{exit, Command};
 
 use pjrt::ProgramFormat::MLIR;
 use pjrt::{Client, HostBuffer, LoadedExecutable};
@@ -100,6 +100,7 @@ enum Expr {
     Num(f64),
     Arr(Vec<Expr>),
     Var(String),
+    Neg(Box<Expr>),
     Bin(Op, Box<Expr>, Box<Expr>),
     Let(String, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
@@ -251,7 +252,7 @@ impl Parser {
     }
 
     fn mul_div(&mut self) -> Expr {
-        let mut lhs = self.atom();
+        let mut lhs = self.unary();
         loop {
             let op = match self.peek() {
                 Some(Tok::Star) => Op::Mul,
@@ -259,10 +260,19 @@ impl Parser {
                 _ => break,
             };
             self.bump();
-            let rhs = self.atom();
+            let rhs = self.unary();
             lhs = Expr::Bin(op, Box::new(lhs), Box::new(rhs));
         }
         lhs
+    }
+
+    fn unary(&mut self) -> Expr {
+        if matches!(self.peek(), Some(Tok::Minus)) {
+            self.bump();
+            Expr::Neg(Box::new(self.unary()))
+        } else {
+            self.atom()
+        }
     }
 
     fn atom(&mut self) -> Expr {
@@ -324,6 +334,26 @@ fn tensor_type(shape: &[usize], dtype: Dtype) -> String {
     format!("tensor<{}{}>", dims, dtype.name())
 }
 
+fn mlir_float(n: f64) -> String {
+    let s = format!("{:?}", n);
+    if s.contains('e') && !s.contains('.') {
+        s.replace('e', ".0e")
+    } else {
+        s
+    }
+}
+
+fn axis_arg(e: &Expr, shape: &[usize]) -> usize {
+    let n = match e {
+        Expr::Num(n) => *n,
+        _ => die("reduction axis must be a number literal"),
+    };
+    if n.fract() != 0.0 || n < 0.0 || n as usize >= shape.len() {
+        die(&format!("reduction axis {} out of range for shape {:?}", n, shape));
+    }
+    n as usize
+}
+
 #[derive(Debug, Clone)]
 struct Val {
     id: usize,
@@ -345,12 +375,12 @@ impl Tracer {
         Val { id, shape, dtype }
     }
 
-    fn constant(&mut self, n: f64) -> Val {
-        self.emit(format!("stablehlo.constant dense<{:?}> : tensor<f64>", n), vec![], Dtype::F64)
-    }
-
-    fn zero(&mut self, dtype: Dtype) -> Val {
-        self.emit(format!("stablehlo.constant dense<0.0> : {}", tensor_type(&[], dtype)), vec![], dtype)
+    fn constant(&mut self, n: f64, dtype: Dtype) -> Val {
+        self.emit(
+            format!("stablehlo.constant dense<{}> : {}", mlir_float(n), tensor_type(&[], dtype)),
+            vec![],
+            dtype,
+        )
     }
 
     fn convert(&mut self, v: &Val, dtype: Dtype) -> Val {
@@ -365,11 +395,21 @@ impl Tracer {
     }
 
     fn broadcast(&mut self, v: &Val, shape: &[usize]) -> Val {
+        let offset = shape.len() - v.shape.len();
+        let dims: Vec<String> = (offset..shape.len()).map(|d| d.to_string()).collect();
         let op = format!(
-            "stablehlo.broadcast_in_dim %{}, dims = [] : ({}) -> {}",
-            v.id, tensor_type(&v.shape, v.dtype), tensor_type(shape, v.dtype)
+            "stablehlo.broadcast_in_dim %{}, dims = [{}] : ({}) -> {}",
+            v.id,
+            dims.join(", "),
+            tensor_type(&v.shape, v.dtype),
+            tensor_type(shape, v.dtype)
         );
         self.emit(op, shape.to_vec(), v.dtype)
+    }
+
+    fn unary(&mut self, name: &str, v: &Val) -> Val {
+        let op = format!("stablehlo.{} %{} : {}", name, v.id, tensor_type(&v.shape, v.dtype));
+        self.emit(op, v.shape.clone(), v.dtype)
     }
 
     fn reshape(&mut self, v: &Val, shape: Vec<usize>) -> Val {
@@ -380,7 +420,7 @@ impl Tracer {
         self.emit(op, shape, v.dtype)
     }
 
-    fn binop(&mut self, op: Op, a: Val, b: Val) -> Val {
+    fn ewise(&mut self, name: &str, a: Val, b: Val) -> Val {
         let (a, b) = if a.dtype == b.dtype {
             (a, b)
         } else if a.shape.is_empty() {
@@ -393,31 +433,68 @@ impl Tracer {
         };
         let (a, b) = if a.shape == b.shape {
             (a, b)
-        } else if a.shape.is_empty() {
+        } else if a.shape.len() <= b.shape.len() && b.shape.ends_with(&a.shape) {
             (self.broadcast(&a, &b.shape.clone()), b)
-        } else if b.shape.is_empty() {
+        } else if b.shape.len() < a.shape.len() && a.shape.ends_with(&b.shape) {
             let b = self.broadcast(&b, &a.shape.clone());
             (a, b)
         } else {
-            die(&format!("shape mismatch: {:?} vs {:?}", a.shape, b.shape));
-        };
-        let name = match op {
-            Op::Add => "add",
-            Op::Sub => "subtract",
-            Op::Mul => "multiply",
-            Op::Div => "divide",
+            die(&format!("shape mismatch: {:?} vs {:?} (broadcast aligns trailing dims)", a.shape, b.shape));
         };
         let text = format!("stablehlo.{} %{}, %{} : {}", name, a.id, b.id, tensor_type(&a.shape, a.dtype));
         let (shape, dtype) = (a.shape, a.dtype);
         self.emit(text, shape, dtype)
     }
 
-    fn sum(&mut self, v: &Val) -> Val {
-        if v.shape.is_empty() {
+    fn binop(&mut self, op: Op, a: Val, b: Val) -> Val {
+        let name = match op {
+            Op::Add => "add",
+            Op::Sub => "subtract",
+            Op::Mul => "multiply",
+            Op::Div => "divide",
+        };
+        self.ewise(name, a, b)
+    }
+
+    fn matmul(&mut self, a: Val, b: Val) -> Val {
+        if a.dtype != b.dtype {
+            die(&format!("matmul dtype mismatch: {} vs {}", a.dtype.name(), b.dtype.name()));
+        }
+        if a.shape.is_empty() || a.shape.len() > 2 || b.shape.is_empty() || b.shape.len() > 2 {
+            die(&format!("matmul supports rank 1 and 2, got {:?} vs {:?}", a.shape, b.shape));
+        }
+        if a.shape[a.shape.len() - 1] != b.shape[0] {
+            die(&format!("matmul contraction mismatch: {:?} vs {:?}", a.shape, b.shape));
+        }
+        let mut shape = Vec::new();
+        if a.shape.len() == 2 {
+            shape.push(a.shape[0]);
+        }
+        if b.shape.len() == 2 {
+            shape.push(b.shape[1]);
+        }
+        let op = format!(
+            "stablehlo.dot_general %{}, %{}, contracting_dims = [{}] x [0] : ({}, {}) -> {}",
+            a.id,
+            b.id,
+            a.shape.len() - 1,
+            tensor_type(&a.shape, a.dtype),
+            tensor_type(&b.shape, b.dtype),
+            tensor_type(&shape, a.dtype)
+        );
+        self.emit(op, shape, a.dtype)
+    }
+
+    fn reduce_sum(&mut self, v: &Val, axes: &[usize]) -> Val {
+        if axes.is_empty() {
             return v.clone();
         }
-        let init = self.zero(v.dtype);
-        let dims: Vec<String> = (0..v.shape.len()).map(|d| d.to_string()).collect();
+        let init = self.constant(0.0, v.dtype);
+        let out_shape: Vec<usize> = v.shape.iter().enumerate()
+            .filter(|(i, _)| !axes.contains(i))
+            .map(|(_, &d)| d)
+            .collect();
+        let dims: Vec<String> = axes.iter().map(|d| d.to_string()).collect();
         let op = format!(
             "stablehlo.reduce(%{} init: %{}) applies stablehlo.add across dimensions = [{}] : ({}, {}) -> {}",
             v.id,
@@ -425,9 +502,9 @@ impl Tracer {
             dims.join(", "),
             tensor_type(&v.shape, v.dtype),
             tensor_type(&[], v.dtype),
-            tensor_type(&[], v.dtype)
+            tensor_type(&out_shape, v.dtype)
         );
-        self.emit(op, vec![], v.dtype)
+        self.emit(op, out_shape, v.dtype)
     }
 
     fn stack(&mut self, vals: Vec<Val>) -> Val {
@@ -462,7 +539,11 @@ impl Tracer {
 
     fn trace(&mut self, e: &Expr, env: &HashMap<String, Val>, fns: &HashMap<String, Decl>) -> Val {
         match e {
-            Expr::Num(n) => self.constant(*n),
+            Expr::Num(n) => self.constant(*n, Dtype::F64),
+            Expr::Neg(inner) => {
+                let v = self.trace(inner, env, fns);
+                self.unary("negate", &v)
+            }
             Expr::Arr(elems) => {
                 if elems.is_empty() {
                     die("empty array literal");
@@ -514,12 +595,23 @@ impl Tracer {
 
     fn builtin(&mut self, name: &str, args: &[Expr], env: &HashMap<String, Val>, fns: &HashMap<String, Decl>) -> Val {
         match name {
-            "sum" => {
-                if args.len() != 1 {
-                    die(&format!("sum expects 1 arg, got {}", args.len()));
+            "sum" | "mean" => {
+                if args.is_empty() || args.len() > 2 {
+                    die(&format!("{} expects 1 or 2 args, got {}", name, args.len()));
                 }
                 let v = self.trace(&args[0], env, fns);
-                self.sum(&v)
+                let axes: Vec<usize> = if args.len() == 2 {
+                    vec![axis_arg(&args[1], &v.shape)]
+                } else {
+                    (0..v.shape.len()).collect()
+                };
+                let total = self.reduce_sum(&v, &axes);
+                if name == "sum" {
+                    return total;
+                }
+                let count: usize = axes.iter().map(|&d| v.shape[d]).product();
+                let denom = self.constant(count as f64, v.dtype);
+                self.ewise("divide", total, denom)
             }
             "print" => {
                 if args.len() != 1 {
@@ -529,19 +621,38 @@ impl Tracer {
                 self.prints.push(v.clone());
                 v
             }
-            "f32" => {
+            "f32" | "f64" => {
                 if args.len() != 1 {
-                    die(&format!("f32 expects 1 arg, got {}", args.len()));
+                    die(&format!("{} expects 1 arg, got {}", name, args.len()));
                 }
+                let dtype = if name == "f32" { Dtype::F32 } else { Dtype::F64 };
                 let v = self.trace(&args[0], env, fns);
-                self.convert(&v, Dtype::F32)
+                self.convert(&v, dtype)
             }
-            "f64" => {
+            "exp" | "log" | "tanh" | "sqrt" => {
                 if args.len() != 1 {
-                    die(&format!("f64 expects 1 arg, got {}", args.len()));
+                    die(&format!("{} expects 1 arg, got {}", name, args.len()));
                 }
                 let v = self.trace(&args[0], env, fns);
-                self.convert(&v, Dtype::F64)
+                let op = if name == "exp" { "exponential" } else { name };
+                self.unary(op, &v)
+            }
+            "max" | "min" => {
+                if args.len() != 2 {
+                    die(&format!("{} expects 2 args, got {}", name, args.len()));
+                }
+                let a = self.trace(&args[0], env, fns);
+                let b = self.trace(&args[1], env, fns);
+                let op = if name == "max" { "maximum" } else { "minimum" };
+                self.ewise(op, a, b)
+            }
+            "matmul" => {
+                if args.len() != 2 {
+                    die(&format!("matmul expects 2 args, got {}", args.len()));
+                }
+                let a = self.trace(&args[0], env, fns);
+                let b = self.trace(&args[1], env, fns);
+                self.matmul(a, b)
             }
             _ => die(&format!("undefined function: {}", name)),
         }
@@ -551,14 +662,24 @@ impl Tracer {
 fn build_module(tracer: &Tracer, outputs: &[Val]) -> String {
     let types: Vec<String> = outputs.iter().map(|v| tensor_type(&v.shape, v.dtype)).collect();
     let names: Vec<String> = outputs.iter().map(|v| format!("%{}", v.id)).collect();
+    let signature = if types.is_empty() {
+        String::new()
+    } else {
+        format!(" -> ({})", types.join(", "))
+    };
+    let ret = if names.is_empty() {
+        "    return\n".to_string()
+    } else {
+        format!("    return {} : {}\n", names.join(", "), types.join(", "))
+    };
     let mut s = String::new();
     s.push_str("module {\n");
-    s.push_str(&format!("  func.func @main() -> ({}) {{\n", types.join(", ")));
+    s.push_str(&format!("  func.func @main(){} {{\n", signature));
     for op in &tracer.ops {
         s.push_str(op);
         s.push('\n');
     }
-    s.push_str(&format!("    return {} : {}\n", names.join(", "), types.join(", ")));
+    s.push_str(&ret);
     s.push_str("  }\n}\n");
     s
 }
@@ -594,8 +715,7 @@ fn host_tensor(h: HostBuffer) -> Tensor {
 }
 
 fn execute(mlir: &str) -> Vec<Tensor> {
-    let plugin_path = env::var("PJRT_PLUGIN_PATH")
-        .unwrap_or_else(|_| "plugins/libpjrt_cpu.dylib".to_string());
+    let plugin_path = plugin_path();
     let api = pjrt::plugin(&plugin_path)
         .load()
         .unwrap_or_else(|e| die(&format!("cannot load PJRT plugin at {}: {}", plugin_path, e)));
@@ -647,22 +767,88 @@ fn die(msg: &str) -> ! {
     exit(1);
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        die("usage: vector <file.vec>");
+const USAGE: &str = "usage: vector <command>
+
+  run <file.vec>      compile and execute
+  build <file.vec>    print StableHLO to stdout
+  setup               download the PJRT CPU plugin to ~/.vector
+  version             print version";
+
+fn home() -> String {
+    env::var("HOME").unwrap_or_else(|_| die("HOME is not set"))
+}
+
+fn plugin_file() -> &'static str {
+    if cfg!(target_os = "macos") { "libpjrt_cpu.dylib" } else { "libpjrt_cpu.so" }
+}
+
+fn plugin_path() -> String {
+    if let Ok(p) = env::var("PJRT_PLUGIN_PATH") {
+        return p;
     }
-    let src = fs::read_to_string(&args[1])
+    let path = format!("{}/.vector/{}", home(), plugin_file());
+    if fs::metadata(&path).is_err() {
+        die(&format!("PJRT plugin not found at {}; run `vector setup` or set PJRT_PLUGIN_PATH", path));
+    }
+    path
+}
+
+fn compile(path: &str) -> String {
+    let src = fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
     let mut p = Parser { toks: lexed.toks, cols: lexed.cols, lines: lexed.lines, pos: 0 };
     let prog = p.program();
     let mut tracer = Tracer { ops: Vec::new(), next_id: 0, prints: Vec::new() };
-    let result = tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
-    let mut outputs = tracer.prints.clone();
-    outputs.push(result);
-    let module = build_module(&tracer, &outputs);
-    for tensor in execute(&module) {
+    tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
+    let outputs = tracer.prints.clone();
+    build_module(&tracer, &outputs)
+}
+
+fn run(path: &str) {
+    for tensor in execute(&compile(path)) {
         println!("{}", format_tensor(&tensor));
+    }
+}
+
+fn setup() {
+    let platform = match (env::consts::OS, env::consts::ARCH) {
+        ("macos", "aarch64") => "darwin-arm64",
+        ("macos", "x86_64") => "darwin-amd64",
+        ("linux", "aarch64") => "linux-arm64",
+        ("linux", "x86_64") => "linux-amd64",
+        (os, arch) => die(&format!("no prebuilt PJRT CPU plugin for {}-{}", os, arch)),
+    };
+    let dir = format!("{}/.vector", home());
+    fs::create_dir_all(&dir).unwrap_or_else(|e| die(&format!("cannot create {}: {}", dir, e)));
+    let url = format!(
+        "https://github.com/zml/pjrt-artifacts/releases/latest/download/pjrt-cpu_{}.tar.gz",
+        platform
+    );
+    println!("downloading {}", url);
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("curl -fL --progress-bar {} | tar xz -C {}", url, dir))
+        .status()
+        .unwrap_or_else(|e| die(&format!("cannot run curl: {}", e)));
+    if !status.success() {
+        die("plugin download failed");
+    }
+    let path = format!("{}/{}", dir, plugin_file());
+    if fs::metadata(&path).is_err() {
+        die(&format!("download completed but {} is missing", path));
+    }
+    println!("installed {}", path);
+}
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("run") if args.len() == 3 => run(&args[2]),
+        Some("build") if args.len() == 3 => print!("{}", compile(&args[2])),
+        Some("setup") if args.len() == 2 => setup(),
+        Some("version") if args.len() == 2 => println!("vector {}", env!("CARGO_PKG_VERSION")),
+        Some("help") => println!("{}", USAGE),
+        _ => die(USAGE),
     }
 }
