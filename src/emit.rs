@@ -7,6 +7,9 @@ fn tensor_type(shape: &[usize], dtype: Dtype) -> String {
 }
 
 fn mlir_float(n: f64) -> String {
+    if !n.is_finite() {
+        return format!("0x{:016X}", n.to_bits());
+    }
     let s = format!("{:?}", n);
     if s.contains('e') && !s.contains('.') {
         s.replace('e', ".0e")
@@ -55,9 +58,9 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
                 operands.join(", "), dim, in_types.join(", "), out
             )
         }
-        OpKind::Reduce(axes) => format!(
-            "stablehlo.reduce({} init: {}) applies stablehlo.add across dimensions = [{}] : ({}, {}) -> {}",
-            arg(0), arg(1), join(axes), t(0), t(1), out
+        OpKind::Reduce(reducer, axes) => format!(
+            "stablehlo.reduce({} init: {}) applies stablehlo.{} across dimensions = [{}] : ({}, {}) -> {}",
+            arg(0), arg(1), reducer, join(axes), t(0), t(1), out
         ),
         OpKind::Dot(lb, rb, lc, rc) => {
             let batching = if lb.is_empty() {

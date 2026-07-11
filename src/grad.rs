@@ -109,9 +109,18 @@ impl Tracer {
                 }
                 contribs
             }
-            OpKind::Reduce(axes) => {
+            OpKind::Reduce(reducer, axes) => {
                 let kept: Vec<usize> = (0..ins[0].shape.len()).filter(|d| !axes.contains(d)).collect();
-                let da = self.broadcast_along(g, &ins[0].shape.clone(), kept);
+                let gb = self.broadcast_along(g, &ins[0].shape.clone(), kept.clone());
+                let da = match reducer.as_str() {
+                    "add" => gb,
+                    _ => {
+                        let ob = self.broadcast_along(&out, &ins[0].shape.clone(), kept);
+                        let mask = self.compare("EQ", &ins[0], &ob);
+                        let zero = self.zeros_like(&gb);
+                        self.select(&mask, &gb, &zero)
+                    }
+                };
                 vec![(ins[0].id, da)]
             }
             OpKind::Dot(lb, _, lc, rc) => {

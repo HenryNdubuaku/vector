@@ -1,0 +1,52 @@
+# Classify three gaussian blobs with an MLP + softmax cross-entropy.
+# The dataset is generated in-language; the per-row cross entropy is
+# written for a single sample and batched with vmap.
+#
+#   vector run examples/classify.vec
+#
+# Prints: initial loss and accuracy, final loss and accuracy.
+
+blob_a = randn(50, 2) * 0.6 + [0.0, 2.0]
+blob_b = randn(50, 2) * 0.6 + [2.0, -1.5]
+blob_c = randn(50, 2) * 0.6 + [-2.0, -1.5]
+inputs = reshape([blob_a, blob_b, blob_c], 150, 2)
+
+labels_a = zeros(50, 3) + [1.0, 0.0, 0.0]
+labels_b = zeros(50, 3) + [0.0, 1.0, 0.0]
+labels_c = zeros(50, 3) + [0.0, 0.0, 1.0]
+targets = reshape([labels_a, labels_b, labels_c], 150, 3)
+
+fn cross_entropy(logits, label):
+  shifted = logits - max(logits)
+  log_probs = shifted - log(sum(exp(shifted)))
+  -sum(label * log_probs)
+
+module Dense(in_size, out_size):
+  init:
+    {w: randn(in_size, out_size), b: randn(out_size)}
+  forward(self, x):
+    matmul(x, self.w) + self.b
+
+module Classifier(hidden):
+  init:
+    {l1: Dense(2, hidden), l2: Dense(hidden, 3)}
+  forward(self, x):
+    self.l2(tanh(self.l1(x)))
+  loss(self, inputs, targets):
+    mean(vmap(cross_entropy, self(inputs), targets))
+  accuracy(self, inputs, targets):
+    logits = self(inputs)
+    hit = sum(targets * logits, 1) >= max(logits, 1)
+    mean(where(hit, 1.0, 0.0))
+
+model = Classifier(16)
+
+print(model.loss(inputs, targets))
+print(model.accuracy(inputs, targets))
+
+learning_rate = 0.5
+for step in 0..150:
+  model = model - learning_rate * grad(model.loss, inputs, targets)
+
+print(model.loss(inputs, targets))
+print(model.accuracy(inputs, targets))

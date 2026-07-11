@@ -4,7 +4,7 @@ fn norm_sq(xs):
 print(grad(norm_sq, [3.0, 4.0]))
 
 fn hinge(x):
-  sum(max(x, 0.0))
+  sum(maximum(x, 0.0))
 
 print(grad(hinge, [1.0, -2.0]))
 

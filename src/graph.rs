@@ -74,7 +74,7 @@ pub enum OpKind {
     Convert,
     Broadcast(Vec<usize>),
     Reshape,
-    Reduce(Vec<usize>),
+    Reduce(String, Vec<usize>),
     Dot(Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>),
     Compare(String),
     Select,

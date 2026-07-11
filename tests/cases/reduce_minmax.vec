@@ -1,0 +1,17 @@
+m = [[1.0, 5.0], [7.0, 3.0]]
+print(max(m))
+print(max(m, 0))
+print(max(m, 1))
+print(min(m))
+print(maximum([1.0, 4.0], [3.0, 2.0]))
+print(minimum(2.0, [1.0, 3.0]))
+
+fn peak(x):
+  max(x)
+
+print(grad(peak, [1.0, 5.0, 3.0]))
+
+fn rowpeaks(x):
+  sum(max(x, 1))
+
+print(grad(rowpeaks, [[1.0, 5.0], [7.0, 3.0]]))

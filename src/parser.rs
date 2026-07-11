@@ -251,8 +251,15 @@ impl Parser {
         Expr::For(var, start, end, stmts, Box::new(rest))
     }
 
+    fn same_line(&self) -> bool {
+        self.pos > 0 && self.peek_line() == Some(self.lines[self.pos - 1])
+    }
+
     fn expr(&mut self) -> Expr {
         let lhs = self.add_sub();
+        if !self.same_line() {
+            return lhs;
+        }
         let dir = match self.peek() {
             Some(Tok::Lt) => "LT",
             Some(Tok::Gt) => "GT",
@@ -284,6 +291,9 @@ impl Parser {
     fn add_sub(&mut self) -> Expr {
         let mut lhs = self.mul_div();
         loop {
+            if !self.same_line() {
+                break;
+            }
             let op = match self.peek() {
                 Some(Tok::Plus) => Op::Add,
                 Some(Tok::Minus) => Op::Sub,
@@ -299,6 +309,9 @@ impl Parser {
     fn mul_div(&mut self) -> Expr {
         let mut lhs = self.unary();
         loop {
+            if !self.same_line() {
+                break;
+            }
             let op = match self.peek() {
                 Some(Tok::Star) => Op::Mul,
                 Some(Tok::Slash) => Op::Div,

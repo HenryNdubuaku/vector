@@ -332,16 +332,20 @@ impl Tracer {
         BVal { val, bdims: k }
     }
 
-    pub fn reduce_sum(&mut self, v: &Val, axes: &[usize]) -> Val {
+    pub fn reduce(&mut self, reducer: &str, init: f64, v: &Val, axes: &[usize]) -> Val {
         if axes.is_empty() {
             return v.clone();
         }
-        let init = self.constant(0.0, v.dtype);
+        let init = self.constant(init, v.dtype);
         let out_shape: Vec<usize> = v.shape.iter().enumerate()
             .filter(|(i, _)| !axes.contains(i))
             .map(|(_, &d)| d)
             .collect();
-        self.emit(OpKind::Reduce(axes.to_vec()), vec![v.id, init.id], out_shape, v.dtype)
+        self.emit(OpKind::Reduce(reducer.to_string(), axes.to_vec()), vec![v.id, init.id], out_shape, v.dtype)
+    }
+
+    pub fn reduce_sum(&mut self, v: &Val, axes: &[usize]) -> Val {
+        self.reduce("add", 0.0, v, axes)
     }
 
     fn stack(&mut self, vals: Vec<BVal>) -> BVal {
@@ -519,7 +523,7 @@ impl Tracer {
 
     fn builtin(&mut self, name: &str, args: &[Expr], env: &HashMap<String, TVal>, fns: &HashMap<String, Decl>) -> TVal {
         match name {
-            "sum" | "mean" => {
+            "sum" | "mean" | "max" | "min" => {
                 if args.is_empty() || args.len() > 2 {
                     die(&format!("{} expects 1 or 2 args, got {}", name, args.len()));
                 }
@@ -531,9 +535,14 @@ impl Tracer {
                     (0..per.len()).collect()
                 };
                 let axes: Vec<usize> = per_axes.iter().map(|a| a + v.bdims).collect();
-                let total = self.reduce_sum(&v.val, &axes);
+                let (reducer, init) = match name {
+                    "max" => ("maximum", f64::NEG_INFINITY),
+                    "min" => ("minimum", f64::INFINITY),
+                    _ => ("add", 0.0),
+                };
+                let total = self.reduce(reducer, init, &v.val, &axes);
                 let total = TVal::Tensor(BVal { val: total, bdims: v.bdims });
-                if name == "sum" {
+                if name != "mean" {
                     return total;
                 }
                 let count: usize = per_axes.iter().map(|&d| per[d]).product();
@@ -681,14 +690,13 @@ impl Tracer {
                 let val = self.emit(OpKind::DenseConst(vals), vec![], dims, Dtype::F64);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
-            "max" | "min" => {
+            "maximum" | "minimum" => {
                 if args.len() != 2 {
                     die(&format!("{} expects 2 args, got {}", name, args.len()));
                 }
                 let a = self.trace(&args[0], env, fns);
                 let b = self.trace(&args[1], env, fns);
-                let op = if name == "max" { "maximum" } else { "minimum" };
-                self.tmap2(op, a, b)
+                self.tmap2(name, a, b)
             }
             "load" => {
                 if args.len() != 1 {
