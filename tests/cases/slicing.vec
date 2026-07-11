@@ -10,10 +10,9 @@ fn pick(x):
 
 print(grad(pick, [10.0, 20.0, 30.0, 40.0]))
 
-fn mod(a, b):
-  a - floor(a / b) * b
-
 acc = 0.0
 for i in 0..6:
   acc = acc + sum(slice([10.0, 20.0, 30.0], mod(i, 3.0), 1))
 print(acc)
+print(mod(-1.0, 3.0))
+print(mod([5.0, 6.0, 7.0], 3.0))

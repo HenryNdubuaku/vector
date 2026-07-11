@@ -449,7 +449,7 @@ impl Tracer {
             Expr::Var(s) => {
                 if let Some(v) = env.get(s) {
                     v.clone()
-                } else if let Some(n) = self.static_num(s) {
+                } else if let Some(n) = self.static_num(s).or_else(|| named_const(s)) {
                     let val = self.constant(n, Dtype::F64);
                     TVal::Tensor(BVal { val, bdims: 0 })
                 } else if fns.contains_key(s) {
@@ -468,7 +468,9 @@ impl Tracer {
                 let r = self.trace(r, env, fns).tensor("comparison operand");
                 TVal::Tensor(self.bcompare(dir, l, r))
             }
-            Expr::For(var, start, end, stmts, rest) => {
+            Expr::For(var, start_e, end_e, stmts, rest) => {
+                let start = self.int_lit(start_e, env, "range start");
+                let end = self.int_lit(end_e, env, "range end");
                 let mut carried: Vec<String> = Vec::new();
                 for (name, _) in stmts {
                     if let Some(n) = name {
@@ -483,7 +485,7 @@ impl Tracer {
                 if self.grad_depth > 0 {
                     let mut env2 = env.clone();
                     self.region_depth += 1;
-                    for k in *start..*end {
+                    for k in start..end {
                         let kv = self.constant(k as f64, Dtype::F64);
                         env2.insert(var.clone(), TVal::Tensor(BVal { val: kv, bdims: 0 }));
                         for (name, stmt) in stmts {
@@ -507,8 +509,8 @@ impl Tracer {
                     l
                 }).collect();
 
-                let limit = self.constant(*end as f64, Dtype::F64);
-                let counter_init = self.constant(*start as f64, Dtype::F64);
+                let limit = self.constant(end as f64, Dtype::F64);
+                let counter_init = self.constant(start as f64, Dtype::F64);
 
                 let body_start = self.nodes.len();
                 let counter_arg = self.emit(OpKind::IterArg, vec![], vec![], Dtype::F64);
@@ -817,6 +819,17 @@ impl Tracer {
                 let val = self.emit(OpKind::DenseConst(vals), vec![], dims, Dtype::F64);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
+            "mod" => {
+                if args.len() != 2 {
+                    die(&format!("mod expects 2 args, got {}", args.len()));
+                }
+                let a = self.trace(&args[0], env, fns);
+                let b = self.trace(&args[1], env, fns);
+                let quotient = self.tmap2("divide", a.clone(), b.clone());
+                let floored = self.tunary("floor", &quotient);
+                let whole = self.tmap2("multiply", floored, b);
+                self.tmap2("subtract", a, whole)
+            }
             "maximum" | "minimum" => {
                 if args.len() != 2 {
                     die(&format!("{} expects 2 args, got {}", name, args.len()));
@@ -1029,6 +1042,13 @@ fn rebuild(structure: &TVal, grads: &mut std::vec::IntoIter<Val>) -> TVal {
     }
 }
 
+fn named_const(name: &str) -> Option<f64> {
+    match name {
+        "pi" => Some(std::f64::consts::PI),
+        _ => None,
+    }
+}
+
 impl Tracer {
     fn static_num(&self, name: &str) -> Option<f64> {
         self.statics.last().and_then(|frame| frame.get(name).copied())
@@ -1050,6 +1070,7 @@ impl Tracer {
                     die(&format!("{} must be a compile-time constant; '{}' is computed at runtime", what, s));
                 }
                 self.static_num(s)
+                    .or_else(|| named_const(s))
                     .unwrap_or_else(|| die(&format!("{} must be a number literal", what)))
             }
             _ => die(&format!("{} must be a number literal", what)),

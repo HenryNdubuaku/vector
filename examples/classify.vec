@@ -1,5 +1,9 @@
 # Classify three gaussian blobs with an MLP + softmax cross-entropy.
 
+hidden_size = 16
+learning_rate = 0.5
+train_steps = 150
+
 blob_a = randn(50, 2) * 0.6 + [0.0, 2.0]
 blob_b = randn(50, 2) * 0.6 + [2.0, -1.5]
 blob_c = randn(50, 2) * 0.6 + [-2.0, -1.5]
@@ -9,6 +13,15 @@ labels_a = zeros(50, 3) + [1.0, 0.0, 0.0]
 labels_b = zeros(50, 3) + [0.0, 1.0, 0.0]
 labels_c = zeros(50, 3) + [0.0, 0.0, 1.0]
 targets = reshape([labels_a, labels_b, labels_c], 150, 3)
+
+val_a = randn(10, 2) * 0.6 + [0.0, 2.0]
+val_b = randn(10, 2) * 0.6 + [2.0, -1.5]
+val_c = randn(10, 2) * 0.6 + [-2.0, -1.5]
+val_inputs = reshape([val_a, val_b, val_c], 30, 2)
+val_labels_a = zeros(10, 3) + [1.0, 0.0, 0.0]
+val_labels_b = zeros(10, 3) + [0.0, 1.0, 0.0]
+val_labels_c = zeros(10, 3) + [0.0, 0.0, 1.0]
+val_targets = reshape([val_labels_a, val_labels_b, val_labels_c], 30, 3)
 
 fn cross_entropy(logits, label):
   shifted = logits - max(logits)
@@ -33,14 +46,12 @@ module Classifier(hidden):
     hit = sum(targets * logits, 1) >= max(logits, 1)
     mean(where(hit, 1.0, 0.0))
 
-model = Classifier(16)
+model = Classifier(hidden_size)
 
-print(model.loss(inputs, targets))
 print(model.accuracy(inputs, targets))
 
-learning_rate = 0.5
-for step in 0..150:
+for step in 0..train_steps:
   model = model - learning_rate * grad(model.loss, inputs, targets)
 
-print(model.loss(inputs, targets))
 print(model.accuracy(inputs, targets))
+print(model.accuracy(val_inputs, val_targets))

@@ -15,7 +15,7 @@ pub enum Expr {
     Bin(Op, Box<Expr>, Box<Expr>),
     Cmp(String, Box<Expr>, Box<Expr>),
     Let(String, Box<Expr>, Box<Expr>),
-    For(String, usize, usize, Vec<(Option<String>, Expr)>, Box<Expr>),
+    For(String, Box<Expr>, Box<Expr>, Vec<(Option<String>, Expr)>, Box<Expr>),
     Call(String, Vec<Expr>),
     Apply(Box<Expr>, Vec<Expr>),
     Seq(Box<Expr>, Box<Expr>),
@@ -209,21 +209,14 @@ impl Parser {
         }
     }
 
-    fn int(&mut self, what: &str) -> usize {
-        match self.bump() {
-            Some(Tok::Num(n)) if n.fract() == 0.0 && n >= 0.0 => n as usize,
-            t => die(&format!("expected {} (integer literal), got {:?}", what, t)),
-        }
-    }
-
     fn for_loop(&mut self, indent: usize) -> Expr {
         let for_col = self.peek_col().unwrap();
         self.bump();
         let var = self.ident("loop variable");
         self.expect(Tok::In, "'in' after loop variable");
-        let start = self.int("range start");
+        let start = Box::new(self.unary());
         self.expect(Tok::DotDot, "'..' in range");
-        let end = self.int("range end");
+        let end = Box::new(self.unary());
         self.expect(Tok::Colon, "':' after range");
         let body_col = self.peek_col().unwrap_or(0);
         if body_col <= for_col {

@@ -20,3 +20,5 @@ half = 0.5
 print(linspace(-half, half, 3))
 n = 4.0
 print(arange(n))
+print(linspace(-pi, pi, 3))
+print(sin(pi / 2.0))

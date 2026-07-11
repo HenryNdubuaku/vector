@@ -1,8 +1,15 @@
 # Train a 1-8-1 tanh network to approximate sin(x) on [-pi, pi].
 
-pi = 3.141592653589793
-inputs = reshape(linspace(-pi, pi, 64), 64, 1)
+n = 64
+batch_size = 16
+hidden_size = 8
+learning_rate = 0.03
+train_steps = 12000
+
+inputs = reshape(linspace(-pi, pi, n), n, 1)
 targets = sin(inputs)
+eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
+eval_targets = sin(eval_inputs)
 
 module Dense(in_size, out_size):
   init:
@@ -19,16 +26,16 @@ module Mlp(hidden):
     error = self(inputs) - targets
     mean(error * error)
 
-model = Mlp(8)
+model = Mlp(hidden_size)
 
 print(model.loss(inputs, targets))
 
-learning_rate = 0.1
-for step in 0..600:
-  model = model - learning_rate * grad(model.loss, inputs, targets)
+for step in 0..train_steps:
+  offset = mod(step, n / batch_size) * batch_size
+  x = slice(inputs, offset, batch_size)
+  t = slice(targets, offset, batch_size)
+  model = model - learning_rate * grad(model.loss, x, t)
 
 print(model.loss(inputs, targets))
-
-eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
 print(model(eval_inputs))
-print(sin(eval_inputs))
+print(eval_targets)
