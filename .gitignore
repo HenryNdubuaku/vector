@@ -1,69 +1,20 @@
-# Prerequisites
-*.d
+# Compiled output
+/target/
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# Cargo.lock — keep it for binaries/applications, ignore it for libraries
+# Uncomment the next line only if this is a library crate
+# Cargo.lock
 
-# Precompiled Headers
-*.gch
-*.pch
+# Backup files from rustfmt
+**/*.rs.bk
 
-# Linker files
-*.ilk
+# MSVC Windows debug files (harmless to keep on macOS)
 
-# Debugger Files
-*.pdb
+*.pdb# macOS
+.DS_Store
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
-
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Build directories
-build/
-Build/
-build-*/
-
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-install_manifest.txt
-compile_commands.json
-
-# Temporary files
-*.tmp
-*.log
-*.bak
+# Editor/IDE
+.idea/
+.vscode/
 *.swp
 
-# vcpkg
-vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
-.cache/
