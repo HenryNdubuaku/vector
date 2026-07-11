@@ -1,0 +1,25 @@
+p = {a: [1.0, 2.0], b: 3.0}
+print(p)
+print(p.a + p.b)
+q = p * 2.0
+print(q.a)
+r = p + q
+print(r.b)
+
+fn nsq(p):
+  sum(p.a * p.a) + p.b * p.b
+
+print(grad(nsq, p))
+
+nested = {inner: {v: [1.0, 1.0]}, w: 2.0}
+print(nested.inner.v)
+
+fn nloss(n):
+  sum(n.inner.v * n.inner.v) * n.w
+
+print(grad(nloss, nested))
+
+s = {x: 1.0}
+for i in 0..3:
+  s = s + s
+print(s.x)

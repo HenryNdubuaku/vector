@@ -5,10 +5,11 @@ use crate::graph::{OpKind, Val};
 use crate::trace::Tracer;
 
 impl Tracer {
-    pub fn backward(&mut self, y: &Val, x: &Val, seed: Val) -> Val {
+    pub fn backward(&mut self, y: &Val, targets: &[Val], seed: Val) -> Vec<Val> {
         let mut cot: HashMap<usize, Val> = HashMap::new();
         cot.insert(y.id, seed);
-        for id in (0..=y.id).rev() {
+        let stop = targets.iter().map(|t| t.id).min().unwrap();
+        for id in (stop + 1..=y.id).rev() {
             let Some(g) = cot.get(&id).cloned() else { continue };
             for (input_id, contribution) in self.vjp(id, &g) {
                 let merged = match cot.remove(&input_id) {
@@ -18,10 +19,12 @@ impl Tracer {
                 cot.insert(input_id, merged);
             }
         }
-        match cot.remove(&x.id) {
-            Some(v) => v,
-            None => self.zeros_like(x),
-        }
+        targets.iter()
+            .map(|t| match cot.get(&t.id) {
+                Some(v) => v.clone(),
+                None => self.zeros_like(t),
+            })
+            .collect()
     }
 
     fn vjp(&mut self, id: usize, g: &Val) -> Vec<(usize, Val)> {
@@ -29,7 +32,7 @@ impl Tracer {
         let out = self.val(id);
         let ins: Vec<Val> = node.inputs.iter().map(|&i| self.val(i)).collect();
         match &node.kind {
-            OpKind::Input | OpKind::Constant(_) | OpKind::Compare(_) => vec![],
+            OpKind::Input | OpKind::Iota | OpKind::Constant(_) | OpKind::Compare(_) => vec![],
             OpKind::Ewise(name) => match name.as_str() {
                 "add" => vec![(ins[0].id, g.clone()), (ins[1].id, g.clone())],
                 "subtract" => {
@@ -74,6 +77,15 @@ impl Tracer {
                         let sech2 = self.ewise("subtract", one, squared);
                         self.ewise("multiply", g.clone(), sech2)
                     }
+                    "sine" => {
+                        let c = self.unary("cosine", &ins[0]);
+                        self.ewise("multiply", g.clone(), c)
+                    }
+                    "cosine" => {
+                        let s = self.unary("sine", &ins[0]);
+                        let gs = self.ewise("multiply", g.clone(), s);
+                        self.unary("negate", &gs)
+                    }
                     _ => die(&format!("no gradient rule for {}", name)),
                 };
                 vec![(ins[0].id, da)]
@@ -102,9 +114,12 @@ impl Tracer {
                 let da = self.broadcast_along(g, &ins[0].shape.clone(), kept);
                 vec![(ins[0].id, da)]
             }
-            OpKind::Dot(lb, _, _, _) => {
+            OpKind::Dot(lb, _, lc, rc) => {
                 let (a, b) = (ins[0].clone(), ins[1].clone());
                 let k = lb.len();
+                if *lc != vec![a.shape.len() - 1] || *rc != vec![k] {
+                    die("higher-order gradients through matmul aren't supported yet");
+                }
                 let batch: Vec<usize> = (0..k).collect();
                 let (da, db) = match (a.shape.len() - k, b.shape.len() - k) {
                     (2, 2) => (

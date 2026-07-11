@@ -25,6 +25,7 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
     let out = tensor_type(&node.shape, node.dtype);
     match &node.kind {
         OpKind::Input => unreachable!("inputs are function parameters"),
+        OpKind::Iota => format!("stablehlo.iota dim = 0 : {}", out),
         OpKind::Constant(n) => format!("stablehlo.constant dense<{}> : {}", mlir_float(*n), out),
         OpKind::Ewise(name) => format!("stablehlo.{} {}, {} : {}", name, arg(0), arg(1), out),
         OpKind::Unary(name) => format!("stablehlo.{} {} : {}", name, arg(0), out),

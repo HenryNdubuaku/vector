@@ -30,6 +30,21 @@ pub fn per_shape(v: &BVal) -> Vec<usize> {
     v.val.shape[v.bdims..].to_vec()
 }
 
+#[derive(Debug, Clone)]
+pub enum TVal {
+    Tensor(BVal),
+    Record(Vec<(String, TVal)>),
+}
+
+impl TVal {
+    pub fn tensor(self, what: &str) -> BVal {
+        match self {
+            TVal::Tensor(b) => b,
+            TVal::Record(_) => die(&format!("{} cannot be a record", what)),
+        }
+    }
+}
+
 pub fn broadcast_shape(a: &[usize], b: &[usize]) -> Vec<usize> {
     if a == b {
         a.to_vec()
@@ -45,6 +60,7 @@ pub fn broadcast_shape(a: &[usize], b: &[usize]) -> Vec<usize> {
 #[derive(Debug, Clone)]
 pub enum OpKind {
     Input,
+    Iota,
     Constant(f64),
     Ewise(String),
     Unary(String),

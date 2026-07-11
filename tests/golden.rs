@@ -100,6 +100,26 @@ fn mixed_depth_vmap_args_fail_loud() {
 }
 
 #[test]
+fn record_field_mismatch_fails_loud() {
+    let path = std::env::temp_dir().join("vector_record_mismatch.vec");
+    fs::write(&path, "print({a: 1.0, b: 2.0} + {a: 1.0, c: 2.0})\n").unwrap();
+    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(!output.status.success());
+    assert!(stderr.contains("record fields mismatch"), "{}", stderr);
+}
+
+#[test]
+fn matmul_on_record_fails_loud() {
+    let path = std::env::temp_dir().join("vector_record_matmul.vec");
+    fs::write(&path, "p = {a: [[1.0]]}\nprint(matmul(p, p))\n").unwrap();
+    let output = run_vector(&["run", path.to_str().unwrap()]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(!output.status.success());
+    assert!(stderr.contains("cannot be a record"), "{}", stderr);
+}
+
+#[test]
 fn matmul_contraction_mismatch_fails() {
     let path = std::env::temp_dir().join("vector_matmul_mismatch.vec");
     fs::write(&path, "print(matmul([[1.0, 2.0]], [[1.0, 2.0]]))\n").unwrap();

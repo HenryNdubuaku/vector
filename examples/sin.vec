@@ -1,0 +1,36 @@
+# Train a 1-8-1 tanh network to approximate sin(x) on [-pi, pi].
+# The dataset is generated in-language: inputs from arange, targets from sin.
+#
+#   vector run examples/sin.vec
+#
+# Prints: initial loss, final loss, predictions at 9 eval points, true values.
+
+fn predict(params, inputs):
+  hidden = tanh(matmul(inputs, params.hidden_weights) + params.hidden_bias)
+  matmul(hidden, params.output_weights) + params.output_bias
+
+fn loss(params):
+  pi = 3.141592653589793
+  inputs = reshape(-pi + arange(64) * (2.0 * pi / 63.0), 64, 1)
+  error = predict(params, inputs) - sin(inputs)
+  mean(error * error)
+
+params = {
+  hidden_weights: [[1.0, -1.0, 2.0, -2.0, 0.5, -0.5, 1.5, -1.5]],
+  hidden_bias: [2.0, 2.0, -1.0, -1.0, 0.0, 0.0, 1.0, -2.0],
+  output_weights: [[0.1], [-0.1], [0.2], [-0.2], [0.1], [-0.1], [0.2], [-0.2]],
+  output_bias: [0.0]
+}
+
+print(loss(params))
+
+learning_rate = 0.1
+for step in 0..600:
+  params = params - learning_rate * grad(loss, params)
+
+print(loss(params))
+
+pi = 3.141592653589793
+eval_inputs = reshape(-pi + arange(9) * (pi / 4.0), 9, 1)
+print(predict(params, eval_inputs))
+print(sin(eval_inputs))

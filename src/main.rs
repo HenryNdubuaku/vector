@@ -50,7 +50,7 @@ fn plugin_path() -> String {
     path
 }
 
-fn compile(path: &str) -> (String, Vec<InputSpec>) {
+fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>) {
     let src = fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
@@ -58,7 +58,8 @@ fn compile(path: &str) -> (String, Vec<InputSpec>) {
     let prog = p.program();
     let mut tracer = Tracer { nodes: Vec::new(), prints: Vec::new(), inputs: Vec::new() };
     tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
-    let outputs = tracer.prints.clone();
+    let outputs: Vec<_> = tracer.prints.iter().map(|(_, v)| v.clone()).collect();
+    let labels: Vec<Option<String>> = tracer.prints.iter().map(|(l, _)| l.clone()).collect();
     let specs: Vec<InputSpec> = tracer.inputs.iter()
         .map(|&(ref path, id)| InputSpec {
             path: path.clone(),
@@ -66,13 +67,16 @@ fn compile(path: &str) -> (String, Vec<InputSpec>) {
             dtype: tracer.nodes[id].dtype,
         })
         .collect();
-    (build_module(&tracer, &outputs), specs)
+    (build_module(&tracer, &outputs), specs, labels)
 }
 
 fn run(path: &str) {
-    let (module, specs) = compile(path);
-    for tensor in execute(&module, &specs) {
-        println!("{}", format_tensor(&tensor));
+    let (module, specs, labels) = compile(path);
+    for (label, tensor) in labels.iter().zip(execute(&module, &specs)) {
+        match label {
+            Some(l) => println!("{}: {}", l, format_tensor(&tensor)),
+            None => println!("{}", format_tensor(&tensor)),
+        }
     }
 }
 

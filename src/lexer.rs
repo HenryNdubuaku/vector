@@ -22,8 +22,11 @@ pub enum Tok {
     RParen,
     LBracket,
     RBracket,
+    LBrace,
+    RBrace,
     Comma,
     Colon,
+    Dot,
 }
 
 pub struct Lexed {
@@ -53,14 +56,10 @@ pub fn lex(src: &str) -> Lexed {
             ' ' | '\t' => { i += 1; col += 1; }
             '\r' => { i += 1; }
             '\n' => { i += 1; line += 1; col = 1; }
-            '-' => {
-                i += 1; col += 1;
-                if i < chars.len() && chars[i] == '-' {
-                    while i < chars.len() && chars[i] != '\n' {
-                        i += 1; col += 1;
-                    }
-                } else {
-                    push(Tok::Minus, tl, tc, &mut toks, &mut lines, &mut cols);
+            '-' => { i += 1; col += 1; push(Tok::Minus, tl, tc, &mut toks, &mut lines, &mut cols); }
+            '#' => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1; col += 1;
                 }
             }
             '+' => { i += 1; col += 1; push(Tok::Plus, tl, tc, &mut toks, &mut lines, &mut cols); }
@@ -70,6 +69,8 @@ pub fn lex(src: &str) -> Lexed {
             ')' => { i += 1; col += 1; push(Tok::RParen, tl, tc, &mut toks, &mut lines, &mut cols); }
             '[' => { i += 1; col += 1; push(Tok::LBracket, tl, tc, &mut toks, &mut lines, &mut cols); }
             ']' => { i += 1; col += 1; push(Tok::RBracket, tl, tc, &mut toks, &mut lines, &mut cols); }
+            '{' => { i += 1; col += 1; push(Tok::LBrace, tl, tc, &mut toks, &mut lines, &mut cols); }
+            '}' => { i += 1; col += 1; push(Tok::RBrace, tl, tc, &mut toks, &mut lines, &mut cols); }
             ',' => { i += 1; col += 1; push(Tok::Comma, tl, tc, &mut toks, &mut lines, &mut cols); }
             ':' => { i += 1; col += 1; push(Tok::Colon, tl, tc, &mut toks, &mut lines, &mut cols); }
             '=' => { i += 1; col += 1; push(Tok::Eq, tl, tc, &mut toks, &mut lines, &mut cols); }
@@ -96,7 +97,8 @@ pub fn lex(src: &str) -> Lexed {
                     i += 2; col += 2;
                     push(Tok::DotDot, tl, tc, &mut toks, &mut lines, &mut cols);
                 } else {
-                    die("unexpected character: .");
+                    i += 1; col += 1;
+                    push(Tok::Dot, tl, tc, &mut toks, &mut lines, &mut cols);
                 }
             }
             '"' => {

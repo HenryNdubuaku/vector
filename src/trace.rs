@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use crate::die;
-use crate::graph::{broadcast_shape, per_shape, BVal, Dtype, Node, OpKind, Val};
+use crate::graph::{broadcast_shape, per_shape, BVal, Dtype, Node, OpKind, TVal, Val};
 use crate::npy::npy_meta;
 use crate::parser::{Decl, Expr, Op};
 
 pub struct Tracer {
     pub nodes: Vec<Node>,
-    pub prints: Vec<Val>,
+    pub prints: Vec<(Option<String>, Val)>,
     pub inputs: Vec<(String, usize)>,
 }
 
@@ -94,14 +94,95 @@ impl Tracer {
         self.emit(OpKind::Ewise(name.to_string()), vec![a.id, b.id], shape, dtype)
     }
 
-    fn binop(&mut self, op: Op, a: BVal, b: BVal) -> BVal {
+    fn binop(&mut self, op: Op, a: TVal, b: TVal) -> TVal {
         let name = match op {
             Op::Add => "add",
             Op::Sub => "subtract",
             Op::Mul => "multiply",
             Op::Div => "divide",
         };
-        self.bewise(name, a, b)
+        self.tmap2(name, a, b)
+    }
+
+    fn tmap2(&mut self, name: &str, a: TVal, b: TVal) -> TVal {
+        match (a, b) {
+            (TVal::Tensor(x), TVal::Tensor(y)) => TVal::Tensor(self.bewise(name, x, y)),
+            (TVal::Record(ra), TVal::Record(rb)) => {
+                if ra.len() != rb.len() {
+                    die(&format!("record fields mismatch: {} vs {} fields", ra.len(), rb.len()));
+                }
+                let mut fields = Vec::new();
+                for (k, av) in ra {
+                    let bv = rb.iter().find(|(k2, _)| *k2 == k).map(|(_, v)| v.clone())
+                        .unwrap_or_else(|| die(&format!("record fields mismatch: missing field '{}'", k)));
+                    let r = self.tmap2(name, av, bv);
+                    fields.push((k, r));
+                }
+                TVal::Record(fields)
+            }
+            (TVal::Record(ra), b) => {
+                let mut fields = Vec::new();
+                for (k, av) in ra {
+                    let r = self.tmap2(name, av, b.clone());
+                    fields.push((k, r));
+                }
+                TVal::Record(fields)
+            }
+            (a, TVal::Record(rb)) => {
+                let mut fields = Vec::new();
+                for (k, bv) in rb {
+                    let r = self.tmap2(name, a.clone(), bv);
+                    fields.push((k, r));
+                }
+                TVal::Record(fields)
+            }
+        }
+    }
+
+    fn tunary(&mut self, name: &str, v: &TVal) -> TVal {
+        match v {
+            TVal::Tensor(b) => TVal::Tensor(self.bunary(name, b)),
+            TVal::Record(fields) => {
+                let mut out = Vec::new();
+                for (k, f) in fields {
+                    let r = self.tunary(name, f);
+                    out.push((k.clone(), r));
+                }
+                TVal::Record(out)
+            }
+        }
+    }
+
+    fn tconvert(&mut self, v: &TVal, dtype: Dtype) -> TVal {
+        match v {
+            TVal::Tensor(b) => {
+                let val = self.convert(&b.val, dtype);
+                TVal::Tensor(BVal { val, bdims: b.bdims })
+            }
+            TVal::Record(fields) => {
+                let mut out = Vec::new();
+                for (k, f) in fields {
+                    let r = self.tconvert(f, dtype);
+                    out.push((k.clone(), r));
+                }
+                TVal::Record(out)
+            }
+        }
+    }
+
+    fn push_prints(&mut self, label: Option<String>, v: &TVal) {
+        match v {
+            TVal::Tensor(b) => self.prints.push((label, b.val.clone())),
+            TVal::Record(fields) => {
+                for (k, f) in fields {
+                    let path = match &label {
+                        Some(p) => format!("{}.{}", p, k),
+                        None => k.clone(),
+                    };
+                    self.push_prints(Some(path), f);
+                }
+            }
+        }
     }
 
     pub fn dot(&mut self, a: &Val, b: &Val, lb: Vec<usize>, rb: Vec<usize>, lc: Vec<usize>, rc: Vec<usize>) -> Val {
@@ -248,23 +329,43 @@ impl Tracer {
         BVal { val, bdims: k }
     }
 
-    pub fn trace(&mut self, e: &Expr, env: &HashMap<String, BVal>, fns: &HashMap<String, Decl>) -> BVal {
+    pub fn trace(&mut self, e: &Expr, env: &HashMap<String, TVal>, fns: &HashMap<String, Decl>) -> TVal {
         match e {
             Expr::Num(n) => {
                 let val = self.constant(*n, Dtype::F64);
-                BVal { val, bdims: 0 }
+                TVal::Tensor(BVal { val, bdims: 0 })
             }
             Expr::Str(_) => die("string literals are only valid as the argument of load"),
+            Expr::RecordLit(fields) => {
+                let mut out = Vec::new();
+                for (k, v) in fields {
+                    let t = self.trace(v, env, fns);
+                    out.push((k.clone(), t));
+                }
+                TVal::Record(out)
+            }
+            Expr::Field(inner, name) => match self.trace(inner, env, fns) {
+                TVal::Record(fields) => fields.iter()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(|| {
+                        let keys: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
+                        die(&format!("record has no field '{}' (fields: {})", name, keys.join(", ")))
+                    }),
+                TVal::Tensor(_) => die(&format!("field access '.{}' on a tensor", name)),
+            },
             Expr::Neg(inner) => {
                 let v = self.trace(inner, env, fns);
-                self.bunary("negate", &v)
+                self.tunary("negate", &v)
             }
             Expr::Arr(elems) => {
                 if elems.is_empty() {
                     die("empty array literal");
                 }
-                let vals: Vec<BVal> = elems.iter().map(|el| self.trace(el, env, fns)).collect();
-                self.stack(vals)
+                let vals: Vec<BVal> = elems.iter()
+                    .map(|el| self.trace(el, env, fns).tensor("array literal element"))
+                    .collect();
+                TVal::Tensor(self.stack(vals))
             }
             Expr::Var(s) => {
                 if let Some(v) = env.get(s) {
@@ -281,15 +382,15 @@ impl Tracer {
                 self.binop(*op, l, r)
             }
             Expr::Cmp(dir, l, r) => {
-                let l = self.trace(l, env, fns);
-                let r = self.trace(r, env, fns);
-                self.bcompare(dir, l, r)
+                let l = self.trace(l, env, fns).tensor("comparison operand");
+                let r = self.trace(r, env, fns).tensor("comparison operand");
+                TVal::Tensor(self.bcompare(dir, l, r))
             }
             Expr::For(var, start, end, stmts, rest) => {
                 let mut env2 = env.clone();
                 for k in *start..*end {
                     let kv = self.constant(k as f64, Dtype::F64);
-                    env2.insert(var.clone(), BVal { val: kv, bdims: 0 });
+                    env2.insert(var.clone(), TVal::Tensor(BVal { val: kv, bdims: 0 }));
                     for (name, stmt) in stmts {
                         let v = self.trace(stmt, &env2, fns);
                         if let Some(name) = name {
@@ -321,7 +422,8 @@ impl Tracer {
                     }
                     let mut env2 = HashMap::new();
                     for (param, arg) in decl.params.iter().zip(args.iter()) {
-                        env2.insert(param.clone(), self.trace(arg, env, fns));
+                        let v = self.trace(arg, env, fns);
+                        env2.insert(param.clone(), v);
                     }
                     self.trace(&decl.body, &env2, fns)
                 } else {
@@ -331,13 +433,13 @@ impl Tracer {
         }
     }
 
-    fn builtin(&mut self, name: &str, args: &[Expr], env: &HashMap<String, BVal>, fns: &HashMap<String, Decl>) -> BVal {
+    fn builtin(&mut self, name: &str, args: &[Expr], env: &HashMap<String, TVal>, fns: &HashMap<String, Decl>) -> TVal {
         match name {
             "sum" | "mean" => {
                 if args.is_empty() || args.len() > 2 {
                     die(&format!("{} expects 1 or 2 args, got {}", name, args.len()));
                 }
-                let v = self.trace(&args[0], env, fns);
+                let v = self.trace(&args[0], env, fns).tensor(name);
                 let per = per_shape(&v);
                 let per_axes: Vec<usize> = if args.len() == 2 {
                     vec![axis_arg(&args[1], &per)]
@@ -346,35 +448,37 @@ impl Tracer {
                 };
                 let axes: Vec<usize> = per_axes.iter().map(|a| a + v.bdims).collect();
                 let total = self.reduce_sum(&v.val, &axes);
-                let total = BVal { val: total, bdims: v.bdims };
+                let total = TVal::Tensor(BVal { val: total, bdims: v.bdims });
                 if name == "sum" {
                     return total;
                 }
                 let count: usize = per_axes.iter().map(|&d| per[d]).product();
                 let denom = self.constant(count as f64, v.val.dtype);
-                self.bewise("divide", total, BVal { val: denom, bdims: 0 })
+                self.tmap2("divide", total, TVal::Tensor(BVal { val: denom, bdims: 0 }))
             }
             "print" => {
                 if args.len() != 1 {
                     die(&format!("print expects 1 arg, got {}", args.len()));
                 }
                 let v = self.trace(&args[0], env, fns);
-                if v.val.dtype == Dtype::I1 {
-                    die("cannot print booleans; use where to select values");
+                if let TVal::Tensor(b) = &v {
+                    if b.val.dtype == Dtype::I1 {
+                        die("cannot print booleans; use where to select values");
+                    }
                 }
-                self.prints.push(v.val.clone());
+                self.push_prints(None, &v);
                 v
             }
             "where" => {
                 if args.len() != 3 {
                     die(&format!("where expects 3 args (condition, then, else), got {}", args.len()));
                 }
-                let c = self.trace(&args[0], env, fns);
+                let c = self.trace(&args[0], env, fns).tensor("where condition");
                 if c.val.dtype != Dtype::I1 {
                     die("where condition must be a comparison");
                 }
-                let a = self.trace(&args[1], env, fns);
-                let b = self.trace(&args[2], env, fns);
+                let a = self.trace(&args[1], env, fns).tensor("where branch");
+                let b = self.trace(&args[2], env, fns).tensor("where branch");
                 if a.val.dtype == Dtype::I1 || b.val.dtype == Dtype::I1 {
                     die("where branches cannot be booleans");
                 }
@@ -399,7 +503,7 @@ impl Tracer {
                 shape.extend(&per);
                 let dtype = av.dtype;
                 let val = self.emit(OpKind::Select, vec![cv.id, av.id, bv.id], shape, dtype);
-                BVal { val, bdims: prefix.len() }
+                TVal::Tensor(BVal { val, bdims: prefix.len() })
             }
             "f32" | "f64" => {
                 if args.len() != 1 {
@@ -407,16 +511,59 @@ impl Tracer {
                 }
                 let dtype = if name == "f32" { Dtype::F32 } else { Dtype::F64 };
                 let v = self.trace(&args[0], env, fns);
-                let val = self.convert(&v.val, dtype);
-                BVal { val, bdims: v.bdims }
+                self.tconvert(&v, dtype)
             }
-            "exp" | "log" | "tanh" | "sqrt" => {
+            "exp" | "log" | "tanh" | "sqrt" | "sin" | "cos" => {
                 if args.len() != 1 {
                     die(&format!("{} expects 1 arg, got {}", name, args.len()));
                 }
                 let v = self.trace(&args[0], env, fns);
-                let op = if name == "exp" { "exponential" } else { name };
-                self.bunary(op, &v)
+                let op = match name {
+                    "exp" => "exponential",
+                    "sin" => "sine",
+                    "cos" => "cosine",
+                    _ => name,
+                };
+                self.tunary(op, &v)
+            }
+            "arange" => {
+                if args.is_empty() || args.len() > 3 {
+                    die(&format!("arange expects (stop), (start, stop) or (start, stop, step), got {} args", args.len()));
+                }
+                let lits: Vec<f64> = args.iter().map(|a| num_lit(a, "arange argument")).collect();
+                let (start, stop, step) = match lits.len() {
+                    1 => (0.0, lits[0], 1.0),
+                    2 => (lits[0], lits[1], 1.0),
+                    _ => (lits[0], lits[1], lits[2]),
+                };
+                if step == 0.0 {
+                    die("arange step must be nonzero");
+                }
+                let count = ((stop - start) / step).ceil();
+                if count <= 0.0 {
+                    die(&format!("arange({}, {}, {}) is empty", start, stop, step));
+                }
+                let indices = self.emit(OpKind::Iota, vec![], vec![count as usize], Dtype::F64);
+                let step_c = self.constant(step, Dtype::F64);
+                let scaled = self.ewise("multiply", indices, step_c);
+                let start_c = self.constant(start, Dtype::F64);
+                let val = self.ewise("add", scaled, start_c);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
+            "reshape" => {
+                if args.len() < 2 {
+                    die("reshape expects a value and dimension literals");
+                }
+                let v = self.trace(&args[0], env, fns).tensor("reshape");
+                let dims: Vec<usize> = args[1..].iter().map(|a| int_lit(a, "reshape dimension")).collect();
+                let per = per_shape(&v);
+                if dims.iter().product::<usize>() != per.iter().product::<usize>() {
+                    die(&format!("reshape from {:?} to {:?} changes element count", per, dims));
+                }
+                let mut shape: Vec<usize> = v.val.shape[..v.bdims].to_vec();
+                shape.extend(&dims);
+                let val = self.reshape(&v.val, shape);
+                TVal::Tensor(BVal { val, bdims: v.bdims })
             }
             "max" | "min" => {
                 if args.len() != 2 {
@@ -425,7 +572,7 @@ impl Tracer {
                 let a = self.trace(&args[0], env, fns);
                 let b = self.trace(&args[1], env, fns);
                 let op = if name == "max" { "maximum" } else { "minimum" };
-                self.bewise(op, a, b)
+                self.tmap2(op, a, b)
             }
             "load" => {
                 if args.len() != 1 {
@@ -436,20 +583,20 @@ impl Tracer {
                     _ => die("load expects a file path string literal"),
                 };
                 if let Some(&(_, id)) = self.inputs.iter().find(|(p, _)| *p == path) {
-                    return BVal { val: self.val(id), bdims: 0 };
+                    return TVal::Tensor(BVal { val: self.val(id), bdims: 0 });
                 }
                 let (shape, dtype, _) = npy_meta(&path);
                 let val = self.emit(OpKind::Input, vec![], shape, dtype);
                 self.inputs.push((path, val.id));
-                BVal { val, bdims: 0 }
+                TVal::Tensor(BVal { val, bdims: 0 })
             }
             "matmul" => {
                 if args.len() != 2 {
                     die(&format!("matmul expects 2 args, got {}", args.len()));
                 }
-                let a = self.trace(&args[0], env, fns);
-                let b = self.trace(&args[1], env, fns);
-                self.bmatmul(a, b)
+                let a = self.trace(&args[0], env, fns).tensor("matmul");
+                let b = self.trace(&args[1], env, fns).tensor("matmul");
+                TVal::Tensor(self.bmatmul(a, b))
             }
             "grad" => {
                 let (fname, decl, vals) = self.transform_args("grad", args, env, fns);
@@ -457,7 +604,10 @@ impl Tracer {
                 for (param, v) in decl.params.iter().zip(&vals) {
                     env2.insert(param.clone(), v.clone());
                 }
-                let y = self.trace(&decl.body, &env2, fns);
+                let y = match self.trace(&decl.body, &env2, fns) {
+                    TVal::Tensor(b) => b,
+                    TVal::Record(_) => die(&format!("grad requires a scalar-valued function; {} returned a record", fname)),
+                };
                 let per = per_shape(&y);
                 if !per.is_empty() {
                     die(&format!("grad requires a scalar-valued function; {} returned shape {:?}", fname, per));
@@ -466,11 +616,16 @@ impl Tracer {
                     let one = self.constant(1.0, y.val.dtype);
                     if y.bdims > 0 { self.broadcast(&one, &y.val.shape.clone()) } else { one }
                 };
-                let val = self.backward(&y.val, &vals[0].val, seed);
-                BVal { val, bdims: vals[0].bdims }
+                let mut leaves = Vec::new();
+                collect_leaves(&vals[0], &mut leaves);
+                let targets: Vec<Val> = leaves.iter().map(|b| b.val.clone()).collect();
+                let grads = self.backward(&y.val, &targets, seed);
+                let mut grads = grads.into_iter();
+                rebuild(&vals[0], &mut grads)
             }
             "vmap" => {
                 let (fname, decl, vals) = self.transform_args("vmap", args, env, fns);
+                let vals: Vec<BVal> = vals.into_iter().map(|v| v.tensor("vmap argument")).collect();
                 let k = vals[0].bdims;
                 if vals.iter().any(|v| v.bdims != k) {
                     die(&format!("vmap({}) arguments must come from the same batching depth; inline constant arguments into the function body", fname));
@@ -487,9 +642,9 @@ impl Tracer {
                 }
                 let mut env2 = HashMap::new();
                 for (param, v) in decl.params.iter().zip(&vals) {
-                    env2.insert(param.clone(), BVal { val: v.val.clone(), bdims: k + 1 });
+                    env2.insert(param.clone(), TVal::Tensor(BVal { val: v.val.clone(), bdims: k + 1 }));
                 }
-                let y = self.trace(&decl.body, &env2, fns);
+                let y = self.trace(&decl.body, &env2, fns).tensor("vmap function result");
                 let val = if y.bdims == k + 1 {
                     y.val
                 } else {
@@ -501,7 +656,7 @@ impl Tracer {
                     dims.extend(k + 1..k + 1 + per.len());
                     self.broadcast_along(&y.val, &target, dims)
                 };
-                BVal { val, bdims: k }
+                TVal::Tensor(BVal { val, bdims: k })
             }
             "jacobian" => {
                 let (fname, decl, vals) = self.transform_args("jacobian", args, env, fns);
@@ -509,13 +664,16 @@ impl Tracer {
                 for (param, v) in decl.params.iter().zip(&vals) {
                     env2.insert(param.clone(), v.clone());
                 }
-                let y = self.trace(&decl.body, &env2, fns);
+                let y = match self.trace(&decl.body, &env2, fns) {
+                    TVal::Tensor(b) => b,
+                    TVal::Record(_) => die(&format!("jacobian requires a vector-valued function; {} returned a record", fname)),
+                };
                 let per = per_shape(&y);
                 if per.len() != 1 {
                     die(&format!("jacobian requires a vector-valued function; {} returned shape {:?} (use grad for scalars)", fname, per));
                 }
                 let m = per[0];
-                let x = vals[0].clone();
+                let x = vals[0].clone().tensor("jacobian target");
                 let mut row_shape: Vec<usize> = x.val.shape[..x.bdims].to_vec();
                 row_shape.push(1);
                 row_shape.extend(&x.val.shape[x.bdims..]);
@@ -532,7 +690,7 @@ impl Tracer {
                     } else {
                         self.broadcast_along(&hot.val, &y.val.shape.clone(), vec![y.bdims])
                     };
-                    let row = self.backward(&y.val, &x.val, seed);
+                    let row = self.backward(&y.val, &[x.val.clone()], seed).remove(0);
                     rows.push(self.reshape(&row, row_shape.clone()).id);
                 }
                 let mut shape: Vec<usize> = x.val.shape[..x.bdims].to_vec();
@@ -543,13 +701,13 @@ impl Tracer {
                 } else {
                     self.emit(OpKind::Concat(x.bdims), rows, shape, x.val.dtype)
                 };
-                BVal { val, bdims: x.bdims }
+                TVal::Tensor(BVal { val, bdims: x.bdims })
             }
             _ => die(&format!("undefined function: {}", name)),
         }
     }
 
-    fn transform_args<'f>(&mut self, transform: &str, args: &[Expr], env: &HashMap<String, BVal>, fns: &'f HashMap<String, Decl>) -> (String, &'f Decl, Vec<BVal>) {
+    fn transform_args<'f>(&mut self, transform: &str, args: &[Expr], env: &HashMap<String, TVal>, fns: &'f HashMap<String, Decl>) -> (String, &'f Decl, Vec<TVal>) {
         let fname = match args.first() {
             Some(Expr::Var(s)) => s.clone(),
             _ => die(&format!("{} expects a function name as its first argument", transform)),
@@ -560,8 +718,46 @@ impl Tracer {
             die(&format!("{}({}) expects {} args after the function name, got {}",
                          transform, fname, decl.params.len(), args.len() - 1));
         }
-        let vals: Vec<BVal> = args[1..].iter().map(|a| self.trace(a, env, fns)).collect();
+        let vals: Vec<TVal> = args[1..].iter().map(|a| self.trace(a, env, fns)).collect();
         (fname, decl, vals)
+    }
+}
+
+fn collect_leaves(v: &TVal, out: &mut Vec<BVal>) {
+    match v {
+        TVal::Tensor(b) => out.push(b.clone()),
+        TVal::Record(fields) => {
+            for (_, f) in fields {
+                collect_leaves(f, out);
+            }
+        }
+    }
+}
+
+fn rebuild(structure: &TVal, grads: &mut std::vec::IntoIter<Val>) -> TVal {
+    match structure {
+        TVal::Tensor(b) => TVal::Tensor(BVal { val: grads.next().unwrap(), bdims: b.bdims }),
+        TVal::Record(fields) => TVal::Record(
+            fields.iter().map(|(k, f)| (k.clone(), rebuild(f, grads))).collect()
+        ),
+    }
+}
+
+fn int_lit(e: &Expr, what: &str) -> usize {
+    match e {
+        Expr::Num(n) if n.fract() == 0.0 && *n >= 0.0 => *n as usize,
+        _ => die(&format!("{} must be a non-negative integer literal", what)),
+    }
+}
+
+fn num_lit(e: &Expr, what: &str) -> f64 {
+    match e {
+        Expr::Num(n) => *n,
+        Expr::Neg(inner) => match inner.as_ref() {
+            Expr::Num(n) => -*n,
+            _ => die(&format!("{} must be a number literal", what)),
+        },
+        _ => die(&format!("{} must be a number literal", what)),
     }
 }
 

@@ -1,4 +1,6 @@
-print(-3.0 + 2.0 * 5.0)
+# comments run to end of line
+print(-3.0 + 2.0 * 5.0)  # including after expressions
 print(-(1.0 + 2.0))
 print(2.0 / -4.0)
 print(1.0 - -1.0)
+print(--5.0)

@@ -8,6 +8,8 @@ pub enum Expr {
     Num(f64),
     Str(String),
     Arr(Vec<Expr>),
+    RecordLit(Vec<(String, Expr)>),
+    Field(Box<Expr>, String),
     Var(String),
     Neg(Box<Expr>),
     Bin(Op, Box<Expr>, Box<Expr>),
@@ -248,8 +250,18 @@ impl Parser {
             self.bump();
             Expr::Neg(Box::new(self.unary()))
         } else {
-            self.atom()
+            self.postfix()
         }
+    }
+
+    fn postfix(&mut self) -> Expr {
+        let mut e = self.atom();
+        while matches!(self.peek(), Some(Tok::Dot)) {
+            self.bump();
+            let name = self.ident("field name after '.'");
+            e = Expr::Field(Box::new(e), name);
+        }
+        e
     }
 
     fn atom(&mut self) -> Expr {
@@ -289,6 +301,29 @@ impl Parser {
                 }
                 self.expect(Tok::RBracket, "']' or ','");
                 Expr::Arr(elems)
+            }
+            Some(Tok::LBrace) => {
+                let mut fields: Vec<(String, Expr)> = Vec::new();
+                if !matches!(self.peek(), Some(Tok::RBrace)) {
+                    loop {
+                        let name = self.ident("record field name");
+                        if fields.iter().any(|(k, _)| *k == name) {
+                            die(&format!("duplicate record field: {}", name));
+                        }
+                        self.expect(Tok::Colon, "':' after field name");
+                        fields.push((name, self.expr()));
+                        if matches!(self.peek(), Some(Tok::Comma)) {
+                            self.bump();
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                self.expect(Tok::RBrace, "'}' or ','");
+                if fields.is_empty() {
+                    die("empty record literal");
+                }
+                Expr::RecordLit(fields)
             }
             t => die(&format!("unexpected token: {:?}", t)),
         }
