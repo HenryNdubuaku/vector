@@ -88,6 +88,6 @@ pub fn npy_host_buffer(spec: &InputSpec) -> HostBuffer {
             let vals: Vec<f64> = data.chunks_exact(8).map(|c| f64::from_le_bytes(c.try_into().unwrap())).collect();
             HostBuffer::from_data(vals, Some(dims), None)
         }
-        Dtype::I1 => unreachable!(),
+        Dtype::I1 | Dtype::I64 => unreachable!(),
     }
 }

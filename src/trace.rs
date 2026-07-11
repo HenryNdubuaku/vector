@@ -703,7 +703,37 @@ impl Tracer {
                 let v = self.trace(&args[0], env, fns);
                 self.tconvert(&v, dtype)
             }
-            "exp" | "log" | "tanh" | "sqrt" | "sin" | "cos" => {
+            "slice" => {
+                if args.len() != 3 {
+                    die(&format!("slice expects (x, start, size), got {} args", args.len()));
+                }
+                let x = self.trace(&args[0], env, fns).tensor("slice");
+                if x.bdims != 0 {
+                    die("slice inside vmap isn't supported yet");
+                }
+                if x.val.shape.is_empty() {
+                    die("slice needs rank >= 1");
+                }
+                let start = self.trace(&args[1], env, fns).tensor("slice start");
+                if start.bdims != 0 || !start.val.shape.is_empty() {
+                    die("slice start must be a scalar");
+                }
+                let size = self.int_lit(&args[2], env, "slice size");
+                if size == 0 || size > x.val.shape[0] {
+                    die(&format!("slice size {} out of range for leading dim {}", size, x.val.shape[0]));
+                }
+                let idx = self.convert(&start.val, Dtype::I64);
+                let mut inputs = vec![x.val.id, idx.id];
+                for _ in 1..x.val.shape.len() {
+                    inputs.push(self.constant(0.0, Dtype::I64).id);
+                }
+                let mut sizes = vec![size];
+                sizes.extend(&x.val.shape[1..]);
+                let shape = sizes.clone();
+                let val = self.emit(OpKind::DynSlice(sizes), inputs, shape, x.val.dtype);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
+            "exp" | "log" | "tanh" | "sqrt" | "sin" | "cos" | "floor" => {
                 if args.len() != 1 {
                     die(&format!("{} expects 1 arg, got {}", name, args.len()));
                 }

@@ -36,6 +36,16 @@ impl Tracer {
             OpKind::While { .. } | OpKind::Proj(_) => {
                 die("differentiating across a for loop isn't supported; take gradients inside the loop body")
             }
+            OpKind::DynSlice(_) => {
+                let zeros = self.zeros_like(&ins[0]);
+                let mut inputs = vec![zeros.id, g.id];
+                inputs.extend(node.inputs[1..].iter().copied());
+                let da = self.emit(OpKind::DynUpdateSlice, inputs, ins[0].shape.clone(), ins[0].dtype);
+                vec![(ins[0].id, da)]
+            }
+            OpKind::DynUpdateSlice => {
+                die("differentiating through dynamic_update_slice isn't supported yet")
+            }
             OpKind::Ewise(name) => match name.as_str() {
                 "add" => vec![(ins[0].id, g.clone()), (ins[1].id, g.clone())],
                 "subtract" => {
@@ -66,6 +76,7 @@ impl Tracer {
             },
             OpKind::Unary(name) => {
                 let da = match name.as_str() {
+                    "floor" => return vec![],
                     "negate" => self.unary("negate", g),
                     "exponential" => self.ewise("multiply", g.clone(), out),
                     "log" => self.ewise("divide", g.clone(), ins[0].clone()),

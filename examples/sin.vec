@@ -1,8 +1,4 @@
 # Train a 1-8-1 tanh network to approximate sin(x) on [-pi, pi].
-#
-#   vector run examples/sin.vec
-#
-# Prints: initial loss, final loss, predictions at 9 eval points, true values.
 
 pi = 3.141592653589793
 inputs = reshape(linspace(-pi, pi, 64), 64, 1)

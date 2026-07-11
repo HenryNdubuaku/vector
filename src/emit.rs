@@ -57,7 +57,10 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
         OpKind::Proj(_) => unreachable!("projections are name aliases"),
         OpKind::While { .. } => unreachable!("while is emitted by the region writer"),
         OpKind::Iota => format!("stablehlo.iota dim = 0 : {}", out),
-        OpKind::Constant(n) => format!("stablehlo.constant dense<{}> : {}", mlir_float(*n), out),
+        OpKind::Constant(n) => match node.dtype {
+            Dtype::I64 => format!("stablehlo.constant dense<{}> : {}", *n as i64, out),
+            _ => format!("stablehlo.constant dense<{}> : {}", mlir_float(*n), out),
+        },
         OpKind::DenseConst(vals) => format!("stablehlo.constant dense<{}> : {}", dense_text(vals, &node.shape), out),
         OpKind::Ewise(name) => format!("stablehlo.{} {}, {} : {}", name, arg(0), arg(1), out),
         OpKind::Unary(name) => format!("stablehlo.{} {} : {}", name, arg(0), out),
@@ -98,6 +101,22 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
             "stablehlo.select {}, {}, {} : {}, {}",
             arg(0), arg(1), arg(2), t(0), out
         ),
+        OpKind::DynSlice(sizes) => {
+            let operands: Vec<String> = (0..node.inputs.len()).map(arg).collect();
+            let in_types: Vec<String> = (0..node.inputs.len()).map(t).collect();
+            format!(
+                "stablehlo.dynamic_slice {}, sizes = [{}] : ({}) -> {}",
+                operands.join(", "), join(sizes), in_types.join(", "), out
+            )
+        }
+        OpKind::DynUpdateSlice => {
+            let operands: Vec<String> = (0..node.inputs.len()).map(arg).collect();
+            let in_types: Vec<String> = (0..node.inputs.len()).map(t).collect();
+            format!(
+                "stablehlo.dynamic_update_slice {} : ({}) -> {}",
+                operands.join(", "), in_types.join(", "), out
+            )
+        }
         OpKind::Slice(dim, start, limit) => {
             let in_shape = &nodes[node.inputs[0]].shape;
             let ranges: Vec<String> = in_shape.iter().enumerate()

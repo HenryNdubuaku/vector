@@ -1,10 +1,4 @@
 # Classify three gaussian blobs with an MLP + softmax cross-entropy.
-# The dataset is generated in-language; the per-row cross entropy is
-# written for a single sample and batched with vmap.
-#
-#   vector run examples/classify.vec
-#
-# Prints: initial loss and accuracy, final loss and accuracy.
 
 blob_a = randn(50, 2) * 0.6 + [0.0, 2.0]
 blob_b = randn(50, 2) * 0.6 + [2.0, -1.5]

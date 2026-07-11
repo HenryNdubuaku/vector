@@ -1,0 +1,19 @@
+d = [10.0, 20.0, 30.0, 40.0]
+print(slice(d, 1.0, 2))
+print(slice(d, 0.0, 3))
+m = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+print(slice(m, 2.0, 1))
+print(floor([1.7, -1.2, 3.0]))
+
+fn pick(x):
+  sum(slice(x, 1.0, 2))
+
+print(grad(pick, [10.0, 20.0, 30.0, 40.0]))
+
+fn mod(a, b):
+  a - floor(a / b) * b
+
+acc = 0.0
+for i in 0..6:
+  acc = acc + sum(slice([10.0, 20.0, 30.0], mod(i, 3.0), 1))
+print(acc)

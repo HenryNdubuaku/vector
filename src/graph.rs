@@ -1,7 +1,7 @@
 use crate::die;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Dtype { F32, F64, I1 }
+pub enum Dtype { F32, F64, I1, I64 }
 
 impl Dtype {
     pub fn name(self) -> &'static str {
@@ -9,6 +9,7 @@ impl Dtype {
             Dtype::F32 => "f32",
             Dtype::F64 => "f64",
             Dtype::I1 => "i1",
+            Dtype::I64 => "i64",
         }
     }
 }
@@ -80,6 +81,8 @@ pub enum OpKind {
     Select,
     Concat(usize),
     Slice(usize, usize, usize),
+    DynSlice(Vec<usize>),
+    DynUpdateSlice,
     IterArg,
     Proj(usize),
     While {
