@@ -382,6 +382,12 @@ impl Tracer {
                 if path.ends_with(".jpg") || path.ends_with(".jpeg") {
                     die("jpeg isn't supported; convert to png");
                 }
+                if path.ends_with(".wav") {
+                    return self.load_wav(&path);
+                }
+                if path.ends_with(".mp3") || path.ends_with(".flac") || path.ends_with(".ogg") {
+                    die("compressed audio isn't supported; convert to wav (pcm)");
+                }
                 if let Some(&(_, id)) = self.inputs.iter()
                     .find(|(src, _)| matches!(src, InputSource::Npy(p) if *p == path)) {
                     return TVal::Tensor(BVal { val: self.val(id), bdims: 0 });
@@ -417,6 +423,14 @@ impl Tracer {
                 }
                 let v = self.trace(&args[0], env, fns);
                 self.imshow(v)
+            }
+            "play" => {
+                if args.len() != 1 {
+                    die(&format!("play expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns);
+                self.plan_play(&v);
+                v
             }
             "transpose" => {
                 if args.len() != 1 {

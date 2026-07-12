@@ -314,6 +314,49 @@ fn imshow_embeds_png_in_svg() {
 }
 
 #[test]
+fn wav_load_decodes_reference_files() {
+    let out = run_vector_src("vector_wav_load.vec",
+        "a = load(\"tests/fixtures/mono16.wav\")\nprint(a.samples * 32768.0)\nprint(a.rate)\ns = load(\"tests/fixtures/stereo8.wav\")\nprint(s.samples * 128.0)\nt = load(\"tests/fixtures/mono24.wav\")\nprint(t.samples)\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "[0, 16384, -16384, 32767] : f32\n\
+         8000 : f32\n\
+         [[0, 127], [-128, -64]] : f32\n\
+         [0.5, -0.5] : f32\n"
+    );
+}
+
+#[test]
+fn wav_save_roundtrip() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let a = run_vector_src("vector_wav_a.vec",
+        "save({samples: [0.0, 0.5, -0.5], rate: 8000.0}, \"tests/cases/data/rt.wav\")\nprint(1.0)\n");
+    assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
+    let b = run_vector_src("vector_wav_b.vec",
+        "c = load(\"tests/cases/data/rt.wav\")\nprint(c.samples)\nprint(c.rate)\n");
+    assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+    assert_eq!(String::from_utf8(b.stdout).unwrap(), "[0, 0.5, -0.5] : f32\n8000 : f32\n");
+}
+
+#[test]
+fn wav_save_requires_samples_and_rate() {
+    let out = run_vector_src("vector_wav_bad.vec",
+        "save({samples: [0.1, 0.2]}, \"tests/cases/data/bad.wav\")\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("{samples, rate}"), "{}", stderr);
+}
+
+#[test]
+fn compressed_audio_fails_loud() {
+    let out = run_vector_src("vector_mp3.vec", "print(load(\"song.mp3\"))\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("convert to wav"), "{}", stderr);
+}
+
+#[test]
 fn jpeg_fails_loud() {
     let out = run_vector_src("vector_jpeg.vec", "print(load(\"photo.jpg\"))\n");
     let stderr = String::from_utf8(out.stderr).unwrap();

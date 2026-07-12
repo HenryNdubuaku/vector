@@ -16,6 +16,7 @@ pub struct Tracer {
     pub exports: Vec<ExportSpec>,
     pub figures: Vec<FigureSpec>,
     pub figure: FigureSpec,
+    pub plays: Vec<SaveSpec>,
     pub modules: HashMap<String, ModuleDecl>,
     pub statics: Vec<HashMap<String, f64>>,
     pub rng: u64,

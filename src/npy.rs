@@ -90,6 +90,9 @@ pub fn input_host_buffer(spec: &InputSpec) -> HostBuffer {
     if spec.path.ends_with(".png") {
         return crate::image::png_host_buffer(&spec.path, &spec.shape);
     }
+    if spec.path.ends_with(".wav") {
+        return crate::audio::wav_host_buffer(&spec.path, &spec.shape);
+    }
     let (shape, dtype, offset) = npy_meta(&spec.path);
     if shape != spec.shape || dtype != spec.dtype {
         die(&format!("{} changed since compilation: {:?} {} vs {:?} {}",

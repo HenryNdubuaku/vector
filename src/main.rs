@@ -1,3 +1,4 @@
+mod audio;
 mod batch;
 mod builtins;
 mod emit;
@@ -91,7 +92,7 @@ fn plugin_path() -> String {
     die("no PJRT plugin found; run `vector setup` or set PJRT_PLUGIN_PATH");
 }
 
-fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<SaveSpec>, Vec<ExportSpec>, Vec<FigureSpec>) {
+fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<SaveSpec>, Vec<ExportSpec>, Vec<FigureSpec>, Vec<SaveSpec>) {
     let src = fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
@@ -115,6 +116,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
         exports: Vec::new(),
         figures: Vec::new(),
         figure: FigureSpec::default(),
+        plays: Vec::new(),
         modules,
         statics: Vec::new(),
         rng: 0x243F6A8885A308D3,
@@ -141,10 +143,13 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
         }
         outputs.extend(fig.images.iter().cloned());
     }
+    for spec in &tracer.plays {
+        outputs.extend(spec.vals.iter().cloned());
+    }
     let labels: Vec<Option<String>> = tracer.prints.iter().map(|(l, _)| l.clone()).collect();
     let specs: Vec<InputSpec> = tracer.inputs.iter()
         .map(|(src, id)| match src {
-            graph::InputSource::Npy(path) | graph::InputSource::Image(path) => InputSpec {
+            graph::InputSource::Npy(path) | graph::InputSource::Image(path) | graph::InputSource::Audio(path) => InputSpec {
                 path: path.clone(),
                 entry: None,
                 shape: tracer.nodes[*id].shape.clone(),
@@ -160,7 +165,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
         })
         .collect();
     let params: Vec<usize> = tracer.inputs.iter().map(|&(_, id)| id).collect();
-    (build_module(&tracer.nodes, &params, &outputs), specs, labels, tracer.saves, tracer.exports, tracer.figures)
+    (build_module(&tracer.nodes, &params, &outputs), specs, labels, tracer.saves, tracer.exports, tracer.figures, tracer.plays)
 }
 
 fn open_figure(path: &str) {
@@ -171,8 +176,16 @@ fn open_figure(path: &str) {
         .unwrap_or_else(|e| die(&format!("cannot open plot viewer: {}", e)));
 }
 
+fn play_audio(path: &str) {
+    let player = if cfg!(target_os = "macos") { "afplay" } else { "aplay" };
+    Command::new(player)
+        .arg(path)
+        .spawn()
+        .unwrap_or_else(|e| die(&format!("cannot start audio player: {}", e)));
+}
+
 fn run(path: &str) {
-    let (module, specs, labels, saves, exports, figures) = compile(path);
+    let (module, specs, labels, saves, exports, figures, plays) = compile(path);
     let mut results = execute(&module, &specs).into_iter();
     for label in &labels {
         let tensor = results.next().unwrap();
@@ -196,6 +209,11 @@ fn run(path: &str) {
         if fig.path.is_none() {
             open_figure(&written);
         }
+    }
+    for spec in &plays {
+        let tensors: Vec<_> = spec.vals.iter().map(|_| results.next().unwrap()).collect();
+        audio::write_wav(spec, &tensors);
+        play_audio(&spec.path);
     }
 }
 

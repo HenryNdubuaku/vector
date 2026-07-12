@@ -323,6 +323,10 @@ pub fn write_save(spec: &SaveSpec, tensors: &[Tensor]) {
         crate::image::write_png(&spec.path, &tensors[0]);
         return;
     }
+    if spec.path.ends_with(".wav") {
+        crate::audio::write_wav(spec, tensors);
+        return;
+    }
     let mut parts: Vec<String> = Vec::new();
     if !spec.metadata.is_empty() {
         let kv: Vec<String> = spec.metadata.iter()
@@ -490,8 +494,10 @@ impl Tracer {
                 }
                 TVal::Record(..) => die("save to .png expects an image tensor"),
             }
+        } else if path.ends_with(".wav") {
+            spec = crate::audio::wav_save_spec(self, v, path);
         } else {
-            die("save expects a path ending in .npy, .safetensors, .csv or .png");
+            die("save expects a path ending in .npy, .safetensors, .csv, .png or .wav");
         }
         self.saves.push(spec);
     }

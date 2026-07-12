@@ -37,6 +37,7 @@ pub enum InputSource {
     Safetensors(String, String),
     Csv(String, String),
     Image(String),
+    Audio(String),
     Live(String),
 }
 

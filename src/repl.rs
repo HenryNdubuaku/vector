@@ -121,6 +121,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         exports: Vec::new(),
         figures: Vec::new(),
         figure: crate::plot::FigureSpec::default(),
+        plays: Vec::new(),
         modules: session.modules.clone(),
         statics: Vec::new(),
         rng: session.rng,
@@ -172,6 +173,9 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         }
         outputs.extend(fig.images.iter().cloned());
     }
+    for spec in &tracer.plays {
+        outputs.extend(spec.vals.iter().cloned());
+    }
 
     let mut results: Vec<Tensor> = Vec::new();
     if !outputs.is_empty() {
@@ -179,7 +183,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         let module = build_module(&tracer.nodes, &params, &outputs);
         let feeds = tracer.inputs.iter()
             .map(|(src, id)| match src {
-                InputSource::Npy(path) | InputSource::Image(path) => input_host_buffer(&InputSpec {
+                InputSource::Npy(path) | InputSource::Image(path) | InputSource::Audio(path) => input_host_buffer(&InputSpec {
                     path: path.clone(),
                     entry: None,
                     shape: tracer.nodes[*id].shape.clone(),
@@ -227,6 +231,11 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         if fig.path.is_none() {
             crate::open_figure(&written);
         }
+    }
+    for spec in &tracer.plays {
+        let tensors: Vec<Tensor> = spec.vals.iter().map(|_| results.next().unwrap()).collect();
+        crate::audio::write_wav(spec, &tensors);
+        crate::play_audio(&spec.path);
     }
 
     let mut captured = captured.into_iter();

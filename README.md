@@ -70,6 +70,10 @@ imshow(load("surface.png"))
 title("sin(x) * sin(y)")
 savefig("surface.svg")
 
+# vector reads, writes and plays audio as wav records {samples, rate}
+tone = sin(linspace(0.0, 1382.3, 4000))
+save({samples: tone * 0.5, rate: 8000.0}, "tone.wav")
+
 # export the stableHLO: emits stableHLO text
 export(model, "mlp.mlir", eval_inputs)
 
@@ -96,6 +100,7 @@ vector filename.vec
 ## Roadmap
 
 - file imports
+- requests
 - neuron (trainium) and metal backends
 - test on GPU
 - test on TPU 
