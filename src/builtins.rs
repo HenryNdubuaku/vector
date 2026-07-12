@@ -368,6 +368,7 @@ impl Tracer {
                     Expr::Str(s) => s.clone(),
                     _ => die("load expects a file path string literal"),
                 };
+                let path = if crate::net::is_url(&path) { crate::net::fetch(&path) } else { path };
                 if let Some(spec) = self.saves.iter().find(|s| s.path == path) {
                     return spec.value.clone();
                 }

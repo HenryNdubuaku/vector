@@ -38,6 +38,9 @@ impl Tracer {
         if self.region_depth > 0 {
             die("export inside a for loop isn't supported (loops compile to one XLA while op); export after the loop");
         }
+        if crate::net::is_url(path) {
+            die("cannot export to a url; export locally and upload");
+        }
         if !path.ends_with(".mlir") {
             die("export expects a path ending in .mlir");
         }

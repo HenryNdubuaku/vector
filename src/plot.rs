@@ -108,6 +108,9 @@ impl Tracer {
             die("savefig without any plot; call plot, scatter or imshow first");
         }
         if let Some(p) = &path {
+            if crate::net::is_url(p) {
+                die("cannot save figures to a url; save locally and upload");
+            }
             if !p.ends_with(".svg") {
                 die("savefig expects a path ending in .svg");
             }

@@ -106,7 +106,6 @@ vector filename.vec
 
 ## Roadmap
 
-- requests
 - live progress bars (staged loop execution)
 - neuron (trainium) and metal backends
 - test on GPU

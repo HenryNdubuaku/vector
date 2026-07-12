@@ -58,7 +58,7 @@ impl Engine {
     }
 }
 
-fn fnv64(bytes: &[u8]) -> u64 {
+pub fn fnv64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     for &b in bytes {
         h ^= b as u64;

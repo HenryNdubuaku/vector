@@ -9,6 +9,7 @@ mod image;
 mod imports;
 mod lexer;
 mod linear;
+mod net;
 mod npy;
 mod parser;
 mod plot;

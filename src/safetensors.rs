@@ -462,6 +462,9 @@ impl Tracer {
         if self.region_depth > 0 {
             die("save inside a for loop isn't supported (loops compile to one XLA while op); save after the loop");
         }
+        if crate::net::is_url(path) {
+            die("cannot save to a url; save locally and upload");
+        }
         if self.saves.iter().any(|s| s.path == path) {
             die(&format!("duplicate save to {}", path));
         }

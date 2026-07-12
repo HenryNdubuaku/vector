@@ -378,6 +378,56 @@ fn missing_import_fails_loud() {
 }
 
 #[test]
+fn load_from_url_downloads_and_caches() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let d: Vec<u8> = [7.0f32, 9.0].iter().flat_map(|x| x.to_le_bytes()).collect();
+    fs::write("tests/cases/data/url_data.npy", npy_bytes("<f4", "(2,)", &d)).unwrap();
+    let mut server = Command::new("python3")
+        .args(["-m", "http.server", "8641", "--bind", "127.0.0.1", "--directory", "tests/cases/data"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    for _ in 0..50 {
+        if std::net::TcpStream::connect(("127.0.0.1", 8641)).is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let url = format!("http://127.0.0.1:8641/url_data.npy?v={}", std::process::id());
+    let src = format!("print(load(\"{}\") * 2.0)\n", url);
+    let first = run_vector_src("vector_url_a.vec", &src);
+    let first_ok = first.status.success();
+    let first_out = String::from_utf8(first.stdout).unwrap();
+    let first_err = String::from_utf8_lossy(&first.stderr).to_string();
+    server.kill().ok();
+    server.wait().ok();
+    assert!(first_ok, "{}", first_err);
+    assert_eq!(first_out, "[14, 18] : f32\n");
+    let second = run_vector_src("vector_url_b.vec", &src);
+    assert!(second.status.success(), "cache miss after server death: {}", String::from_utf8_lossy(&second.stderr));
+    assert_eq!(String::from_utf8(second.stdout).unwrap(), "[14, 18] : f32\n");
+}
+
+#[test]
+fn save_to_url_fails_loud() {
+    let out = run_vector_src("vector_url_save.vec",
+        "save([1.0], \"https://example.com/x.npy\")\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("cannot save to a url"), "{}", stderr);
+}
+
+#[test]
+fn url_without_format_fails_loud() {
+    let out = run_vector_src("vector_url_noext.vec",
+        "print(load(\"https://example.com/data\"))\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("must end in"), "{}", stderr);
+}
+
+#[test]
 fn wav_load_decodes_reference_files() {
     let out = run_vector_src("vector_wav_load.vec",
         "a = load(\"tests/fixtures/mono16.wav\")\nprint(a.samples * 32768.0)\nprint(a.rate)\ns = load(\"tests/fixtures/stereo8.wav\")\nprint(s.samples * 128.0)\nt = load(\"tests/fixtures/mono24.wav\")\nprint(t.samples)\n");
