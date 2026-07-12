@@ -1,6 +1,6 @@
 # Train the network from mlp.vec to approximate sin(x) on [-pi, pi].
 
-import "mlp.vec"
+import mlp
 
 n = 64
 hidden_size = 8

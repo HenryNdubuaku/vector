@@ -1,6 +1,6 @@
 # Run examples/train.vec first; it trains the network and saves mlp.safetensors.
 
-import "mlp.vec"
+import mlp
 
 model = load("mlp.safetensors")
 

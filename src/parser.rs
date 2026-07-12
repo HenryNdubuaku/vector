@@ -181,10 +181,13 @@ impl Parser {
             match self.peek() {
                 Some(Tok::Import) => {
                     self.bump();
-                    match self.bump() {
-                        Some(Tok::Str(s)) => self.imports.push(s),
-                        t => die(&format!("import expects a file path string literal, got {:?}", t)),
+                    let mut path = self.ident("module name after 'import'");
+                    while matches!(self.peek(), Some(Tok::Dot)) && self.same_line() {
+                        self.bump();
+                        path.push('/');
+                        path.push_str(&self.ident("module name after '.'"));
                     }
+                    self.imports.push(path);
                 }
                 Some(Tok::Fn) => {
                     let (name, decl) = self.decl();

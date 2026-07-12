@@ -31,7 +31,7 @@ pub fn load_libraries(from: &str, imports: &[String]) -> (HashMap<String, Decl>,
     let mut done = HashSet::new();
     let base = Path::new(from).parent().unwrap_or(Path::new("")).to_path_buf();
     for imp in imports {
-        resolve(&base.join(imp), &mut fns, &mut modules, &mut visiting, &mut done);
+        resolve(&base.join(format!("{}.vec", imp)), &mut fns, &mut modules, &mut visiting, &mut done);
     }
     (fns, modules)
 }
@@ -58,7 +58,7 @@ fn resolve(
     }
     let base = path.parent().unwrap_or(Path::new("")).to_path_buf();
     for imp in &prog.imports {
-        resolve(&base.join(imp), fns, modules, visiting, done);
+        resolve(&base.join(format!("{}.vec", imp)), fns, modules, visiting, done);
     }
     for (name, decl) in prog.fns {
         if fns.contains_key(&name) || modules.contains_key(&name) {
