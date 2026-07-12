@@ -104,9 +104,20 @@ Step 3: Copy the example from the overview into a .vec file and run with
 vector filename.vec
 ```
 
+Step 4: Serve the exported model over http and query it
+```sh
+vector serve mlp.mlir 8080
+```
+```sh
+curl http://127.0.0.1:8080/    # model signature: {"inputs":["9x1xf32"],"outputs":["9x1xf32"]}
+curl -d '{"inputs": [[[-3.14], [-2.36], [-1.57], [-0.79], [0.0], [0.79], [1.57], [2.36], [3.14]]]}' http://127.0.0.1:8080/
+```
+The server compiles the model once through XLA and answers with `{"outputs": [...]}`; wrong shapes get a loud `{"error": ...}`. 
+
 ## Roadmap
 
-- live progress bars (staged loop execution)
+- common data structures
+- common algorithms 
 - neuron (trainium) and metal backends
 - test on GPU
 - test on TPU 

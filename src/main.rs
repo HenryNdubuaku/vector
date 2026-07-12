@@ -16,6 +16,7 @@ mod plot;
 mod repl;
 mod runtime;
 mod safetensors;
+mod serve;
 mod table;
 mod trace;
 
@@ -36,10 +37,11 @@ use trace::{PrintSpec, RowMeta, Tracer};
 
 const USAGE: &str = "usage: vector [file.vec]
 
-  vector              start the interactive repl
-  vector <file.vec>   compile and run a program
-  vector setup [b]    download a PJRT plugin to ~/.vector (cpu, cuda, rocm, oneapi, tpu)
-  vector version      print version";
+  vector                        start the interactive repl
+  vector <file.vec>             compile and run a program
+  vector serve <m.mlir> [port]  serve an exported model over http (default port 8080)
+  vector setup [b]              download a PJRT plugin to ~/.vector (cpu, cuda, rocm, oneapi, tpu)
+  vector version                print version";
 
 struct VectorError(String);
 
@@ -305,6 +307,12 @@ fn main() {
         match args.get(1).map(String::as_str) {
             Some("setup") if args.len() == 2 => setup("cpu"),
             Some("setup") if args.len() == 3 => setup(&args[2]),
+            Some("serve") if args.len() == 3 => serve::serve(&args[2], 8080),
+            Some("serve") if args.len() == 4 => {
+                let port = args[3].parse()
+                    .unwrap_or_else(|_| die(&format!("port must be a number, got {}", args[3])));
+                serve::serve(&args[2], port)
+            }
             Some("version") if args.len() == 2 => println!("vector {}", env!("CARGO_PKG_VERSION")),
             Some("help") => println!("{}", USAGE),
             Some(path) if args.len() == 2 => run(path),

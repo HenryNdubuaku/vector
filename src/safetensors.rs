@@ -22,12 +22,17 @@ pub struct StMeta {
     pub data_start: usize,
 }
 
-enum Json {
+pub enum Json {
     Str(String),
     Num(f64),
     Other,
     Arr(Vec<Json>),
     Obj(Vec<(String, Json)>),
+}
+
+pub fn parse_json(bytes: &[u8], what: &str) -> Json {
+    let mut p = JsonParser { bytes, pos: 0, path: what };
+    p.value()
 }
 
 struct JsonParser<'a> {

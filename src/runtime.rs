@@ -25,17 +25,20 @@ impl Engine {
         Engine { plugin_path, api, client }
     }
 
-    pub fn execute(&self, mlir: &str, feeds: Vec<HostBuffer>) -> Vec<Tensor> {
+    pub fn prepare(&self, mlir: &str) -> LoadedExecutable {
         let flags = std::env::var("XLA_FLAGS").unwrap_or_default();
         let keyed = format!("{}\n{:?}\n{}\n{}", self.plugin_path, self.api.version(), flags, mlir);
-        let executable = load_cached(&self.client, &keyed).unwrap_or_else(|| {
+        load_cached(&self.client, &keyed).unwrap_or_else(|| {
             let program = pjrt::Program::new(MLIR, mlir.as_bytes());
             let executable = LoadedExecutable::builder(&self.client, &program)
                 .build()
                 .unwrap_or_else(|e| die(&format!("XLA compilation failed: {}", e)));
             store_cache(&executable, &keyed);
             executable
-        });
+        })
+    }
+
+    pub fn run(&self, executable: &LoadedExecutable, feeds: Vec<HostBuffer>) -> Vec<Tensor> {
         let buffers: Vec<Buffer> = feeds.into_iter()
             .map(|feed| {
                 feed.to_sync(&self.client)
@@ -55,6 +58,11 @@ impl Engine {
                 host_tensor(h)
             })
             .collect()
+    }
+
+    pub fn execute(&self, mlir: &str, feeds: Vec<HostBuffer>) -> Vec<Tensor> {
+        let executable = self.prepare(mlir);
+        self.run(&executable, feeds)
     }
 }
 

@@ -377,6 +377,54 @@ fn missing_import_fails_loud() {
     assert!(stderr.contains("cannot read import"), "{}", stderr);
 }
 
+fn http_request(port: u16, method: &str, body: &str) -> String {
+    use std::io::{Read, Write};
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        s,
+        "{} / HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        method, body.len(), body
+    ).unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    out
+}
+
+fn wait_for_port(port: u16) {
+    for _ in 0..100 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("server on port {} did not start", port);
+}
+
+#[test]
+fn serve_answers_http_inference() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let a = run_vector_src("vector_serve_model.vec", &format!(
+        "{}m = Scale(3)\nexport(m, \"tests/cases/data/serve.mlir\", [1.0, 2.0])\nprint(m.s)\n",
+        SCALE_MODULE));
+    assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
+    let mut server = Command::new(env!("CARGO_BIN_EXE_vector"))
+        .args(["serve", "tests/cases/data/serve.mlir", "8643"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_for_port(8643);
+    let signature = http_request(8643, "GET", "");
+    let good = http_request(8643, "POST", "{\"inputs\": [[2.0, 4.0]]}");
+    let bad = http_request(8643, "POST", "{\"inputs\": [[2.0]]}");
+    server.kill().ok();
+    server.wait().ok();
+    assert!(signature.contains("{\"inputs\":[\"2xf32\"],\"outputs\":[\"2xf32\"]}"), "{}", signature);
+    assert!(good.contains("{\"outputs\":[[6,12]]}"), "{}", good);
+    assert!(bad.contains("400"), "{}", bad);
+    assert!(bad.contains("\"error\""), "{}", bad);
+}
+
 #[test]
 fn load_from_url_downloads_and_caches() {
     fs::create_dir_all("tests/cases/data").unwrap();
