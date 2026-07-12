@@ -3,25 +3,29 @@
 import "mlp.vec"
 
 n = 64
-batch_size = 16
 hidden_size = 8
 learning_rate = 0.03
-train_steps = 30000
+epochs = 30
 
 inputs = reshape(linspace(-pi, pi, n), n, 1)
 targets = sin(inputs)
 eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
 eval_targets = sin(eval_inputs)
 
+fn train_epoch(model, inputs, targets, lr):
+  m = model
+  for step in 0..1000:
+    offset = mod(step, 4.0) * 16.0
+    x = slice(inputs, offset, 16)
+    t = slice(targets, offset, 16)
+    m = m - lr * grad(m.loss, x, t)
+  m
+
 model = Mlp(hidden_size)
 
-print(model.loss(inputs, targets))
-
-for step in 0..train_steps:
-  offset = mod(step, n / batch_size) * batch_size
-  x = slice(inputs, offset, batch_size)
-  t = slice(targets, offset, batch_size)
-  model = model - learning_rate * grad(model.loss, x, t)
+for epoch in 0..epochs:
+  model = train_epoch(model, inputs, targets, learning_rate)
+  print(model.loss(inputs, targets))
 
 save(model, "mlp.safetensors")
 model = load("mlp.safetensors")

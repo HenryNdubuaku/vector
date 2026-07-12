@@ -8,7 +8,7 @@ use crate::lexer::{lex, Tok};
 use crate::linear;
 use crate::npy::{input_host_buffer, InputSpec};
 use crate::parser::{Decl, Expr, ModuleDecl, Parser};
-use crate::runtime::{format_tensor, Engine, Tensor};
+use crate::runtime::{Engine, Tensor};
 use crate::safetensors::write_save;
 use crate::trace::Tracer;
 
@@ -127,6 +127,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         figures: Vec::new(),
         figure: crate::plot::FigureSpec::default(),
         plays: Vec::new(),
+        loop_prints: Vec::new(),
         modules: session.modules.clone(),
         statics: Vec::new(),
         rng: session.rng,
@@ -154,9 +155,9 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
 
     let mut metas: Vec<Meta> = Vec::new();
     let mut outputs: Vec<Val> = Vec::new();
-    for (label, val) in tracer.prints.clone() {
-        metas.push(Meta::Show(label));
-        outputs.push(val);
+    for spec in tracer.prints.clone() {
+        metas.push(Meta::Show(spec.label, spec.rows));
+        outputs.push(spec.val);
     }
     if let Some(v) = &echo {
         flatten_show(v, None, &mut metas, &mut outputs);
@@ -210,12 +211,9 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
     let mut captured: Vec<Tensor> = Vec::new();
     for meta in &metas {
         match meta {
-            Meta::Show(label) => {
+            Meta::Show(label, rows) => {
                 let t = results.next().unwrap();
-                match label {
-                    Some(l) => println!("{}: {}", l, format_tensor(&t)),
-                    None => println!("{}", format_tensor(&t)),
-                }
+                crate::print_result(label, rows, &t);
             }
             Meta::Capture => captured.push(results.next().unwrap()),
         }
@@ -253,7 +251,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
 }
 
 enum Meta {
-    Show(Option<String>),
+    Show(Option<String>, Option<crate::trace::RowMeta>),
     Capture,
 }
 
@@ -323,7 +321,7 @@ fn walk(
 fn flatten_show(v: &TVal, label: Option<String>, metas: &mut Vec<Meta>, outputs: &mut Vec<Val>) {
     match v {
         TVal::Tensor(b) => {
-            metas.push(Meta::Show(label));
+            metas.push(Meta::Show(label, None));
             outputs.push(b.val.clone());
         }
         TVal::Record(_, fields) => {

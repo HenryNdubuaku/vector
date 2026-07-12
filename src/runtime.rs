@@ -184,3 +184,14 @@ pub fn format_tensor(t: &Tensor) -> String {
     };
     format!("{} : {}", values, t.dtype())
 }
+
+impl Tensor {
+    pub fn format_row(&self, i: usize) -> String {
+        let inner: usize = self.shape[1..].iter().product::<usize>().max(1);
+        let values = match &self.data {
+            TensorData::F32(v) => format_typed(&v[i * inner..(i + 1) * inner], &self.shape[1..]),
+            TensorData::F64(v) => format_typed(&v[i * inner..(i + 1) * inner], &self.shape[1..]),
+        };
+        format!("{} : {}", values, self.dtype())
+    }
+}

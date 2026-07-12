@@ -8,9 +8,24 @@ use crate::parser::{Decl, Expr, ModuleDecl};
 use crate::plot::FigureSpec;
 use crate::safetensors::SaveSpec;
 
+#[derive(Debug, Clone)]
+pub struct RowMeta {
+    pub var: String,
+    pub start: f64,
+    pub step: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PrintSpec {
+    pub label: Option<String>,
+    pub val: Val,
+    pub rows: Option<RowMeta>,
+}
+
 pub struct Tracer {
     pub nodes: Vec<Node>,
-    pub prints: Vec<(Option<String>, Val)>,
+    pub prints: Vec<PrintSpec>,
+    pub loop_prints: Vec<(Option<String>, Val)>,
     pub inputs: Vec<(InputSource, usize)>,
     pub saves: Vec<SaveSpec>,
     pub exports: Vec<ExportSpec>,
@@ -280,6 +295,7 @@ impl Tracer {
                 }
                 if self.grad_depth > 0 {
                     let mut env2 = env.clone();
+                    let outer_prints = std::mem::take(&mut self.loop_prints);
                     self.region_depth += 1;
                     for k in 0..iterations {
                         let kv = self.constant(start + k as f64 * step, Dtype::F32);
@@ -290,8 +306,21 @@ impl Tracer {
                                 env2.insert(name.clone(), v);
                             }
                         }
+                        let drained = std::mem::take(&mut self.loop_prints);
+                        if !drained.is_empty() && self.region_depth > 1 {
+                            die("print inside nested loops isn't supported; print in the outer loop");
+                        }
+                        for (label, val) in drained {
+                            let tag = format!("{} {}", var, start + k as f64 * step);
+                            let label = match label {
+                                Some(l) => format!("{}: {}", tag, l),
+                                None => tag,
+                            };
+                            self.prints.push(PrintSpec { label: Some(label), val, rows: None });
+                        }
                     }
                     self.region_depth -= 1;
+                    self.loop_prints = outer_prints;
                     let mut env3 = env.clone();
                     for name in &carried {
                         env3.insert(name.clone(), env2[name].clone());
@@ -332,6 +361,7 @@ impl Tracer {
                     env2.insert(name.clone(), rebuild(structure, &mut arg_iter));
                 }
 
+                let outer_prints = std::mem::take(&mut self.loop_prints);
                 self.region_depth += 1;
                 for (name, stmt) in stmts {
                     let v = self.trace(stmt, &env2, fns);
@@ -340,9 +370,29 @@ impl Tracer {
                     }
                 }
                 self.region_depth -= 1;
+                let my_prints = std::mem::take(&mut self.loop_prints);
+                if !my_prints.is_empty() && self.region_depth > 0 {
+                    die("print inside nested loops isn't supported; print in the outer loop");
+                }
+                self.loop_prints = outer_prints;
 
                 let one = self.constant(1.0, Dtype::I64);
                 let next_counter = self.ewise("add", counter_arg.clone(), one);
+
+                let mut print_bufs = Vec::new();
+                for (label, val) in &my_prints {
+                    let mut bshape = vec![iterations];
+                    bshape.extend(&val.shape);
+                    let buf_arg = self.emit(OpKind::IterArg, vec![], bshape.clone(), val.dtype);
+                    let mut ushape = vec![1];
+                    ushape.extend(&val.shape);
+                    let upd = self.reshape(val, ushape);
+                    let zero = self.constant(0.0, Dtype::I64);
+                    let mut dus_inputs = vec![buf_arg.id, upd.id, counter_arg.id];
+                    dus_inputs.extend(std::iter::repeat(zero.id).take(val.shape.len()));
+                    let updated = self.emit(OpKind::DynUpdateSlice, dus_inputs, bshape.clone(), val.dtype);
+                    print_bufs.push((label.clone(), buf_arg, updated, bshape));
+                }
 
                 let mut results = vec![next_counter.id];
                 for (name, structure) in carried.iter().zip(&init_vals) {
@@ -355,6 +405,7 @@ impl Tracer {
                     collect_leaves(&final_val, &mut leaves);
                     results.extend(leaves.iter().map(|b| b.val.id));
                 }
+                results.extend(print_bufs.iter().map(|(_, _, updated, _)| updated.id));
 
                 let body: Vec<usize> = (body_start..self.nodes.len())
                     .filter(|id| !self.claimed.contains(id))
@@ -364,8 +415,12 @@ impl Tracer {
 
                 let mut iter_args = vec![counter_arg.id];
                 iter_args.extend(arg_leaves.iter().map(|b| b.val.id));
+                iter_args.extend(print_bufs.iter().map(|(_, arg, _, _)| arg.id));
                 let mut inputs = vec![counter_init.id];
                 inputs.extend(init_leaves_per.iter().flatten().map(|b| b.val.id));
+                for (_, arg, _, bshape) in &print_bufs {
+                    inputs.push(self.zeros(bshape, arg.dtype).id);
+                }
 
                 let w = self.emit(
                     OpKind::While { iter_args, results, body, limit: limit.id },
@@ -378,6 +433,14 @@ impl Tracer {
                 for (k, b) in arg_leaves.iter().enumerate() {
                     let val = self.emit(OpKind::Proj(k + 1), vec![w.id], b.val.shape.clone(), b.val.dtype);
                     proj_leaves.push(val);
+                }
+                for (j, (label, arg, _, bshape)) in print_bufs.iter().enumerate() {
+                    let val = self.emit(OpKind::Proj(1 + arg_leaves.len() + j), vec![w.id], bshape.clone(), arg.dtype);
+                    self.prints.push(PrintSpec {
+                        label: label.clone(),
+                        val,
+                        rows: Some(RowMeta { var: var.clone(), start, step }),
+                    });
                 }
                 let mut env3 = env.clone();
                 let mut proj_iter = proj_leaves.into_iter();

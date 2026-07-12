@@ -89,16 +89,17 @@ impl Tracer {
                 if args.len() != 1 {
                     die(&format!("print expects 1 arg, got {}", args.len()));
                 }
-                if self.region_depth > 0 {
-                    die("print inside a for loop isn't supported (loops compile to one XLA while op); print after the loop");
-                }
                 let v = self.trace(&args[0], env, fns);
                 if let TVal::Tensor(b) = &v {
                     if b.val.dtype == Dtype::I1 {
                         die("cannot print booleans; use where to select values");
                     }
                 }
-                self.push_prints(None, &v);
+                if self.region_depth > 0 {
+                    self.push_loop_prints(None, &v);
+                } else {
+                    self.push_prints(None, &v);
+                }
                 v
             }
             "where" => {

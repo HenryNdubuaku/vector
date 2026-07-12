@@ -99,7 +99,7 @@ impl Tracer {
 
     pub fn push_prints(&mut self, label: Option<String>, v: &TVal) {
         match v {
-            TVal::Tensor(b) => self.prints.push((label, b.val.clone())),
+            TVal::Tensor(b) => self.prints.push(crate::trace::PrintSpec { label, val: b.val.clone(), rows: None }),
             TVal::Record(_, fields) => {
                 for (k, f) in fields {
                     let path = match &label {
@@ -107,6 +107,21 @@ impl Tracer {
                         None => k.clone(),
                     };
                     self.push_prints(Some(path), f);
+                }
+            }
+        }
+    }
+
+    pub fn push_loop_prints(&mut self, label: Option<String>, v: &TVal) {
+        match v {
+            TVal::Tensor(b) => self.loop_prints.push((label, b.val.clone())),
+            TVal::Record(_, fields) => {
+                for (k, f) in fields {
+                    let path = match &label {
+                        Some(p) => format!("{}.{}", p, k),
+                        None => k.clone(),
+                    };
+                    self.push_loop_prints(Some(path), f);
                 }
             }
         }

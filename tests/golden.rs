@@ -100,13 +100,12 @@ fn mixed_depth_vmap_args_fail_loud() {
 }
 
 #[test]
-fn print_inside_for_fails_loud() {
-    let path = std::env::temp_dir().join("vector_print_in_for.vec");
-    fs::write(&path, "w = 1.0\nfor i in 0..3:\n  w = w * 2.0\n  print(w)\nprint(w)\n").unwrap();
-    let output = run_vector(&[path.to_str().unwrap()]);
+fn print_inside_nested_loops_fails_loud() {
+    let output = run_vector_src("vector_print_nested.vec",
+        "fn inner(x):\n  y = x\n  for j in 0..2:\n    y = y + 1.0\n    print(y)\n  y\n\nw = 0.0\nfor i in 0..2:\n  w = inner(w)\nprint(w)\n");
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
-    assert!(stderr.contains("print inside a for loop"), "{}", stderr);
+    assert!(stderr.contains("nested loops"), "{}", stderr);
 }
 
 

@@ -1,0 +1,20 @@
+w = 1.0
+for i in 0..3:
+  w = w * 2.0
+  print(w)
+print(w)
+
+acc = 0.0
+for x in 0.0..1.0 by 0.5:
+  acc = acc + x
+  print({a: acc, b: x})
+print(acc)
+
+fn f(v):
+  y = v
+  for k in 0..2:
+    y = y * y
+    print(sum(y))
+  sum(y)
+
+print(grad(f, [2.0]))

@@ -31,7 +31,7 @@ use parser::Parser;
 use plot::FigureSpec;
 use runtime::{execute, format_tensor};
 use safetensors::SaveSpec;
-use trace::Tracer;
+use trace::{PrintSpec, RowMeta, Tracer};
 
 const USAGE: &str = "usage: vector [file.vec]
 
@@ -93,7 +93,7 @@ fn plugin_path() -> String {
     die("no PJRT plugin found; run `vector setup` or set PJRT_PLUGIN_PATH");
 }
 
-fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<SaveSpec>, Vec<ExportSpec>, Vec<FigureSpec>, Vec<SaveSpec>) {
+fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<PrintSpec>, Vec<SaveSpec>, Vec<ExportSpec>, Vec<FigureSpec>, Vec<SaveSpec>) {
     let src = fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
@@ -128,6 +128,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
         figures: Vec::new(),
         figure: FigureSpec::default(),
         plays: Vec::new(),
+        loop_prints: Vec::new(),
         modules,
         statics: Vec::new(),
         rng: 0x243F6A8885A308D3,
@@ -140,7 +141,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
     if !tracer.figure.series.is_empty() {
         die("plot without savefig or show; finish the figure");
     }
-    let mut outputs: Vec<_> = tracer.prints.iter().map(|(_, v)| v.clone()).collect();
+    let mut outputs: Vec<_> = tracer.prints.iter().map(|p| p.val.clone()).collect();
     for spec in &tracer.saves {
         outputs.extend(spec.vals.iter().cloned());
     }
@@ -157,7 +158,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
     for spec in &tracer.plays {
         outputs.extend(spec.vals.iter().cloned());
     }
-    let labels: Vec<Option<String>> = tracer.prints.iter().map(|(l, _)| l.clone()).collect();
+    let prints = tracer.prints.clone();
     let specs: Vec<InputSpec> = tracer.inputs.iter()
         .map(|(src, id)| match src {
             graph::InputSource::Npy(path) | graph::InputSource::Image(path) | graph::InputSource::Audio(path) => InputSpec {
@@ -176,7 +177,25 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
         })
         .collect();
     let params: Vec<usize> = tracer.inputs.iter().map(|&(_, id)| id).collect();
-    (build_module(&tracer.nodes, &params, &outputs), specs, labels, tracer.saves, tracer.exports, tracer.figures, tracer.plays)
+    (build_module(&tracer.nodes, &params, &outputs), specs, prints, tracer.saves, tracer.exports, tracer.figures, tracer.plays)
+}
+
+fn print_result(label: &Option<String>, rows: &Option<RowMeta>, tensor: &runtime::Tensor) {
+    match rows {
+        None => match label {
+            Some(l) => println!("{}: {}", l, format_tensor(tensor)),
+            None => println!("{}", format_tensor(tensor)),
+        },
+        Some(rm) => {
+            for i in 0..tensor.shape()[0] {
+                let tag = format!("{} {}", rm.var, rm.start + i as f64 * rm.step);
+                match label {
+                    Some(l) => println!("{}: {}: {}", tag, l, tensor.format_row(i)),
+                    None => println!("{}: {}", tag, tensor.format_row(i)),
+                }
+            }
+        }
+    }
 }
 
 fn open_figure(path: &str) {
@@ -196,14 +215,11 @@ fn play_audio(path: &str) {
 }
 
 fn run(path: &str) {
-    let (module, specs, labels, saves, exports, figures, plays) = compile(path);
+    let (module, specs, prints, saves, exports, figures, plays) = compile(path);
     let mut results = execute(&module, &specs).into_iter();
-    for label in &labels {
+    for spec in &prints {
         let tensor = results.next().unwrap();
-        match label {
-            Some(l) => println!("{}: {}", l, format_tensor(&tensor)),
-            None => println!("{}", format_tensor(&tensor)),
-        }
+        print_result(&spec.label, &spec.rows, &tensor);
     }
     for spec in &saves {
         let tensors: Vec<_> = spec.names.iter().map(|_| results.next().unwrap()).collect();

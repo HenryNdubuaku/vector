@@ -6,10 +6,9 @@ Programming language for machine learning, built on top of XLA compiler.
 
 # vector is designed for machine learning 
 n = 64
-batch_size = 16
 hidden_size = 8
 learning_rate = 0.03
-train_steps = 30000
+epochs = 30
 
 # vector ships numpy-like vectorized functions 
 inputs = reshape(linspace(-pi, pi, n), n, 1)
@@ -30,14 +29,22 @@ module Mlp(hidden):
     mean(error * error)
 
 # vector is bult on XLA compiler
+fn train_epoch(model, inputs, targets, lr):
+  m = model
+  for step in 0..1000:
+    offset = mod(step, 4.0) * 16.0
+    x = slice(inputs, offset, 16)
+    t = slice(targets, offset, 16)
+    m = m - lr * grad(m.loss, x, t)
+  m
+
 model = Mlp(hidden_size)
 
-# vector programs run on Nvidia/AMD/TPUs and more  
-for step in 0..train_steps:
-  offset = mod(step, n / batch_size) * batch_size
-  x = slice(inputs, offset, batch_size)
-  t = slice(targets, offset, batch_size)
-  model = model - learning_rate * grad(model.loss, x, t)
+# vector programs run on Nvidia/AMD/TPUs and more;
+# print inside a loop logs one neat line per iteration
+for epoch in 0..epochs:
+  model = train_epoch(model, inputs, targets, learning_rate)
+  print(model.loss(inputs, targets))
 
 # vector save weights as safetensors for cross-compatibility
 save(model, "mlp.safetensors")
@@ -100,6 +107,7 @@ vector filename.vec
 ## Roadmap
 
 - requests
+- live progress bars (staged loop execution)
 - neuron (trainium) and metal backends
 - test on GPU
 - test on TPU 
