@@ -97,7 +97,6 @@ pub enum OpKind {
         results: Vec<usize>,
         body: Vec<usize>,
         limit: usize,
-        dir: String,
     },
 }
 

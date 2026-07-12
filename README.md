@@ -7,30 +7,54 @@ Programs are traced to StableHLO and executed through a PJRT plugin — there is
 ## Install
 
 ```sh
-cargo install --path .
-vector setup
+cargo install --path . && vector setup
 ```
 
-Building from source requires `protoc` (`brew install protobuf`). `vector setup` downloads the PJRT CPU plugin for your platform into `~/.vector`; set `PJRT_PLUGIN_PATH` to use a different plugin.
+Building from source requires `protoc` (`brew install protobuf`). `vector setup` downloads the PJRT CPU plugin for your platform into `~/.vector`; on linux, `vector setup cuda` (or `rocm`, `oneapi`, `tpu`) adds an accelerator backend, preferred automatically when present. `VECTOR_BACKEND=cpu` pins a backend; `PJRT_PLUGIN_PATH` overrides everything. TPUs have no f64, so avoid `f64(...)` and f64 `.npy` inputs there.
 
 ## Use
 
 ```python
-fn loss(w):
-  ys = load("ys.npy")
-  d = w - ys
-  mean(d * d)
+n = 64
+batch_size = 16
+hidden_size = 8
+learning_rate = 0.03
+train_steps = 30000
 
-w = [0.0, 0.0]
-for step in 0..100:
-  w = w - 0.1 * grad(loss, w)
-print(w)
-print(loss(w))
+inputs = reshape(linspace(-pi, pi, n), n, 1)
+targets = sin(inputs)
+eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
+eval_targets = sin(eval_inputs)
+
+module Mlp(hidden):
+  l1 = Linear(1, hidden)
+  l2 = Linear(hidden, 1)
+
+  forward(self, x):
+    self.l2(tanh(self.l1(x)))
+
+  loss(self, inputs, targets):
+    error = self(inputs) - targets
+    mean(error * error)
+
+model = Mlp(hidden_size)
+
+print(model.loss(inputs, targets))
+
+for step in 0..train_steps:
+  offset = mod(step, n / batch_size) * batch_size
+  x = slice(inputs, offset, batch_size)
+  t = slice(targets, offset, batch_size)
+  model = model - learning_rate * grad(model.loss, x, t)
+
+print(model.loss(inputs, targets))
+print(model(eval_inputs))
+print(eval_targets)
+
 ```
 
 ```sh
 vector filename.vec
-vector build filename.vec > filename.mlir
 ```
 
 `load` reads `.npy` files (little-endian f32/f64, C order); the tensor becomes a runtime input to the compiled program, so shapes stay static. 
@@ -42,4 +66,4 @@ Loops (`for i in 0..n:`) unroll at trace time, so gradients flow through them; `
 
 - export/load model 
 - plot 
-- different backends
+- neuron (trainium) and metal backends

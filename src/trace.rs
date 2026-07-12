@@ -258,6 +258,7 @@ impl Tracer {
                 if step == 0.0 {
                     die("range step must be nonzero");
                 }
+                let iterations = (((end - start) / step).ceil().max(0.0)) as usize;
                 let mut carried: Vec<String> = Vec::new();
                 for (name, _) in stmts {
                     if let Some(n) = name {
@@ -270,7 +271,6 @@ impl Tracer {
                     }
                 }
                 if self.grad_depth > 0 {
-                    let iterations = (((end - start) / step).ceil().max(0.0)) as usize;
                     let mut env2 = env.clone();
                     self.region_depth += 1;
                     for k in 0..iterations {
@@ -297,19 +297,29 @@ impl Tracer {
                     l
                 }).collect();
 
-                let limit = self.constant(end, Dtype::F64);
-                let counter_init = self.constant(start, Dtype::F64);
+                // the counter counts trips in i64 (TPUs reject f64); the loop
+                // variable is derived as start + counter * step
+                let limit = self.constant(iterations as f64, Dtype::I64);
+                let counter_init = self.constant(0.0, Dtype::I64);
 
                 let body_start = self.nodes.len();
                 self.interned.push(HashMap::new());
-                let counter_arg = self.emit(OpKind::IterArg, vec![], vec![], Dtype::F64);
+                let counter_arg = self.emit(OpKind::IterArg, vec![], vec![], Dtype::I64);
                 let arg_leaves: Vec<BVal> = init_leaves_per.iter().flatten().map(|b| {
                     let val = self.emit(OpKind::IterArg, vec![], b.val.shape.clone(), b.val.dtype);
                     BVal { val, bdims: b.bdims }
                 }).collect();
 
                 let mut env2 = env.clone();
-                let var_view = self.convert(&counter_arg, Dtype::F32);
+                let mut var_view = self.convert(&counter_arg, Dtype::F32);
+                if step != 1.0 {
+                    let step_c = self.constant(step, Dtype::F32);
+                    var_view = self.ewise("multiply", var_view, step_c);
+                }
+                if start != 0.0 {
+                    let start_c = self.constant(start, Dtype::F32);
+                    var_view = self.ewise("add", var_view, start_c);
+                }
                 env2.insert(var.clone(), TVal::Tensor(BVal { val: var_view, bdims: 0 }));
                 let mut arg_iter = arg_leaves.iter().map(|b| b.val.clone()).collect::<Vec<_>>().into_iter();
                 for (name, structure) in carried.iter().zip(&init_vals) {
@@ -325,8 +335,8 @@ impl Tracer {
                 }
                 self.region_depth -= 1;
 
-                let step_c = self.constant(step, Dtype::F64);
-                let next_counter = self.ewise("add", counter_arg.clone(), step_c);
+                let one = self.constant(1.0, Dtype::I64);
+                let next_counter = self.ewise("add", counter_arg.clone(), one);
 
                 let mut results = vec![next_counter.id];
                 for (name, structure) in carried.iter().zip(&init_vals) {
@@ -351,12 +361,11 @@ impl Tracer {
                 let mut inputs = vec![counter_init.id];
                 inputs.extend(init_leaves_per.iter().flatten().map(|b| b.val.id));
 
-                let dir = if step > 0.0 { "LT" } else { "GT" };
                 let w = self.emit(
-                    OpKind::While { iter_args, results, body, limit: limit.id, dir: dir.to_string() },
+                    OpKind::While { iter_args, results, body, limit: limit.id },
                     inputs,
                     vec![],
-                    Dtype::F64,
+                    Dtype::I64,
                 );
 
                 let mut proj_leaves = Vec::new();

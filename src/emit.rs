@@ -134,7 +134,7 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
 }
 
 fn write_while(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
-    let OpKind::While { iter_args, results, body, limit, dir } = &nodes[id].kind else {
+    let OpKind::While { iter_args, results, body, limit } = &nodes[id].kind else {
         unreachable!()
     };
     let ind = " ".repeat(indent);
@@ -151,9 +151,10 @@ fn write_while(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
     };
     s.push_str(&format!("{}{} = stablehlo.while({}) : {}\n", ind, head, binders.join(", "), types.join(", ")));
     s.push_str(&format!("{} cond {{\n", ind));
+    let counter = tensor_type(&nodes[iter_args[0]].shape, nodes[iter_args[0]].dtype);
     s.push_str(&format!(
-        "{}  %c{} = stablehlo.compare {}, %{}, {} : (tensor<f64>, tensor<f64>) -> tensor<i1>\n",
-        ind, id, dir, iter_args[0], val_name(*limit, nodes)
+        "{}  %c{} = stablehlo.compare LT, %{}, {} : ({}, {}) -> tensor<i1>\n",
+        ind, id, iter_args[0], val_name(*limit, nodes), counter, counter
     ));
     s.push_str(&format!("{}  stablehlo.return %c{} : tensor<i1>\n", ind, id));
     s.push_str(&format!("{} }} do {{\n", ind));
