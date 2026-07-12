@@ -299,8 +299,6 @@ impl Tracer {
                     l
                 }).collect();
 
-                // the counter counts trips in i64 (TPUs reject f64); the loop
-                // variable is derived as start + counter * step
                 let limit = self.constant(iterations as f64, Dtype::I64);
                 let counter_init = self.constant(0.0, Dtype::I64);
 

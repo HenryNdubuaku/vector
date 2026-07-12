@@ -306,6 +306,9 @@ impl Tracer {
                     Expr::Str(s) => s.clone(),
                     _ => die("load expects a file path string literal"),
                 };
+                if let Some(spec) = self.saves.iter().find(|s| s.path == path) {
+                    return spec.value.clone();
+                }
                 if path.ends_with(".safetensors") {
                     return self.load_safetensors(&path);
                 }

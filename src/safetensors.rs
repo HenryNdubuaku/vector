@@ -307,6 +307,7 @@ pub struct SaveSpec {
     pub names: Vec<String>,
     pub vals: Vec<Val>,
     pub metadata: Vec<(String, String)>,
+    pub value: TVal,
 }
 
 pub fn write_save(spec: &SaveSpec, tensors: &[Tensor]) {
@@ -452,7 +453,7 @@ impl Tracer {
         if self.saves.iter().any(|s| s.path == path) {
             die(&format!("duplicate save to {}", path));
         }
-        let mut spec = SaveSpec { path: path.to_string(), names: Vec::new(), vals: Vec::new(), metadata: Vec::new() };
+        let mut spec = SaveSpec { path: path.to_string(), names: Vec::new(), vals: Vec::new(), metadata: Vec::new(), value: v.clone() };
         if path.ends_with(".npy") {
             match v {
                 TVal::Tensor(b) => {

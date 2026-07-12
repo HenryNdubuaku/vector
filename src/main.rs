@@ -176,7 +176,6 @@ fn setup(backend: &str) {
     let dir = format!("{}/.vector", home());
     fs::create_dir_all(&dir).unwrap_or_else(|e| die(&format!("cannot create {}: {}", dir, e)));
     let cmd = if backend == "tpu" {
-        // google ships libtpu as a wheel (a zip holding libtpu/libtpu.so), not a tarball
         format!(
             "command -v unzip >/dev/null || {{ echo 'vector setup tpu needs unzip installed' >&2; exit 1; }}; \
              url=$(curl -fsSL https://pypi.org/simple/libtpu/ | grep -o 'https://[^\"#]*manylinux[^\"#]*x86_64\\.whl' | tail -1); \

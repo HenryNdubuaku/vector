@@ -47,6 +47,9 @@ for step in 0..train_steps:
   t = slice(targets, offset, batch_size)
   model = model - learning_rate * grad(model.loss, x, t)
 
+save(model, "mlp.safetensors")
+model = load("mlp.safetensors")
+
 print(model.loss(inputs, targets))
 print(model(eval_inputs))
 print(eval_targets)

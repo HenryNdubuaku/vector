@@ -209,6 +209,17 @@ fn load_pytorch_style_names() {
 }
 
 #[test]
+fn load_after_save_in_same_program() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let _ = fs::remove_file("tests/cases/data/samerun.safetensors");
+    let out = run_vector_src("vector_same_run.vec",
+        "x = [1.0, 2.0]\nsave({v: x * 3.0}, \"tests/cases/data/samerun.safetensors\")\np = load(\"tests/cases/data/samerun.safetensors\")\nprint(p.v)\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "[3, 6] : f32\n");
+    assert!(fs::metadata("tests/cases/data/samerun.safetensors").is_ok(), "checkpoint was not written");
+}
+
+#[test]
 fn save_inside_for_fails_loud() {
     let out = run_vector_src("vector_save_in_for.vec",
         "w = 1.0\nfor i in 0..2:\n  w = w * 2.0\n  save(w, \"tests/cases/data/w.npy\")\nprint(w)\n");
