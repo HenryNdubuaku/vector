@@ -133,6 +133,13 @@ impl Tensor {
         }
     }
 
+    pub fn f64_vec(&self) -> Vec<f64> {
+        match &self.data {
+            TensorData::F32(v) => v.iter().map(|&x| x as f64).collect(),
+            TensorData::F64(v) => v.clone(),
+        }
+    }
+
     fn dtype(&self) -> &'static str {
         match &self.data {
             TensorData::F32(_) => "f32",

@@ -1,6 +1,7 @@
 mod batch;
 mod builtins;
 mod emit;
+mod export;
 mod grad;
 mod graph;
 mod lexer;
@@ -18,6 +19,7 @@ use std::fs;
 use std::process::{exit, Command};
 
 use emit::build_module;
+use export::ExportSpec;
 use lexer::lex;
 use npy::InputSpec;
 use parser::Parser;
@@ -85,7 +87,7 @@ fn plugin_path() -> String {
     die("no PJRT plugin found; run `vector setup` or set PJRT_PLUGIN_PATH");
 }
 
-fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<SaveSpec>) {
+fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<SaveSpec>, Vec<ExportSpec>) {
     let src = fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
@@ -106,6 +108,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
         prints: Vec::new(),
         inputs: Vec::new(),
         saves: Vec::new(),
+        exports: Vec::new(),
         modules,
         statics: Vec::new(),
         rng: 0x243F6A8885A308D3,
@@ -118,6 +121,9 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
     let mut outputs: Vec<_> = tracer.prints.iter().map(|(_, v)| v.clone()).collect();
     for spec in &tracer.saves {
         outputs.extend(spec.vals.iter().cloned());
+    }
+    for spec in &tracer.exports {
+        outputs.extend(spec.weight_vals.iter().cloned());
     }
     let labels: Vec<Option<String>> = tracer.prints.iter().map(|(l, _)| l.clone()).collect();
     let specs: Vec<InputSpec> = tracer.inputs.iter()
@@ -137,11 +143,12 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
             graph::InputSource::Live(_) => die("internal: live input outside the repl"),
         })
         .collect();
-    (build_module(&tracer, &outputs), specs, labels, tracer.saves)
+    let params: Vec<usize> = tracer.inputs.iter().map(|&(_, id)| id).collect();
+    (build_module(&tracer.nodes, &params, &outputs), specs, labels, tracer.saves, tracer.exports)
 }
 
 fn run(path: &str) {
-    let (module, specs, labels, saves) = compile(path);
+    let (module, specs, labels, saves, exports) = compile(path);
     let mut results = execute(&module, &specs).into_iter();
     for label in &labels {
         let tensor = results.next().unwrap();
@@ -153,6 +160,10 @@ fn run(path: &str) {
     for spec in &saves {
         let tensors: Vec<_> = spec.names.iter().map(|_| results.next().unwrap()).collect();
         safetensors::write_save(spec, &tensors);
+    }
+    for spec in &exports {
+        let tensors: Vec<_> = spec.weight_vals.iter().map(|_| results.next().unwrap()).collect();
+        export::write_export(spec, &tensors);
     }
 }
 

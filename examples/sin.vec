@@ -38,3 +38,8 @@ model = load("mlp.safetensors")
 print(model.loss(inputs, targets))
 print(model(eval_inputs))
 print(eval_targets)
+
+save(model(eval_inputs), "predictions.npy")
+print(load("predictions.npy") - eval_targets)
+
+export(model, "mlp.mlir", eval_inputs)

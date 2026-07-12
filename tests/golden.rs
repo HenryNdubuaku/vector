@@ -220,6 +220,30 @@ fn load_after_save_in_same_program() {
 }
 
 #[test]
+fn export_writes_standalone_stablehlo() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let out = run_vector_src("vector_export.vec", &format!(
+        "{}m = Scale(4)\nfor i in 0..5:\n  m = m - 0.05 * grad(m.loss, [3.0, 6.0])\nexport(m, \"tests/cases/data/scale.mlir\", [1.0, 2.0])\nprint(m.s)\n",
+        SCALE_MODULE));
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "3.03125 : f32\n");
+    let mlir = fs::read_to_string("tests/cases/data/scale.mlir").unwrap();
+    assert!(mlir.contains("func.func @main(%"), "{}", mlir);
+    assert!(mlir.contains("tensor<2xf32>"), "{}", mlir);
+    assert!(mlir.contains("stablehlo.multiply"), "{}", mlir);
+    assert!(mlir.contains("stablehlo.constant dense<3.03125>"), "{}", mlir);
+}
+
+#[test]
+fn export_requires_module_instance() {
+    let out = run_vector_src("vector_export_tensor.vec",
+        "x = [1.0]\nexport(x, \"tests/cases/data/x.mlir\", [1.0])\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("module instance"), "{}", stderr);
+}
+
+#[test]
 fn save_inside_for_fails_loud() {
     let out = run_vector_src("vector_save_in_for.vec",
         "w = 1.0\nfor i in 0..2:\n  w = w * 2.0\n  save(w, \"tests/cases/data/w.npy\")\nprint(w)\n");

@@ -1,5 +1,4 @@
 use crate::graph::{Dtype, Node, OpKind, Val};
-use crate::trace::Tracer;
 
 fn tensor_type(shape: &[usize], dtype: Dtype) -> String {
     let dims: String = shape.iter().map(|d| format!("{}x", d)).collect();
@@ -177,9 +176,9 @@ fn write_region(s: &mut String, ids: &[usize], nodes: &[Node], indent: usize) {
     }
 }
 
-pub fn build_module(tracer: &Tracer, outputs: &[Val]) -> String {
+pub fn build_module(nodes: &[Node], params: &[usize], outputs: &[Val]) -> String {
     let types: Vec<String> = outputs.iter().map(|v| tensor_type(&v.shape, v.dtype)).collect();
-    let names: Vec<String> = outputs.iter().map(|v| val_name(v.id, &tracer.nodes)).collect();
+    let names: Vec<String> = outputs.iter().map(|v| val_name(v.id, nodes)).collect();
     let signature = if types.is_empty() {
         String::new()
     } else {
@@ -190,20 +189,20 @@ pub fn build_module(tracer: &Tracer, outputs: &[Val]) -> String {
     } else {
         format!("    return {} : {}\n", names.join(", "), types.join(", "))
     };
-    let params: Vec<String> = tracer.inputs.iter()
-        .map(|&(_, id)| format!("%{}: {}", id, tensor_type(&tracer.nodes[id].shape, tracer.nodes[id].dtype)))
+    let params: Vec<String> = params.iter()
+        .map(|&id| format!("%{}: {}", id, tensor_type(&nodes[id].shape, nodes[id].dtype)))
         .collect();
     let mut claimed = std::collections::HashSet::new();
-    for node in &tracer.nodes {
+    for node in nodes {
         if let OpKind::While { body, .. } = &node.kind {
             claimed.extend(body.iter().copied());
         }
     }
-    let top: Vec<usize> = (0..tracer.nodes.len()).filter(|id| !claimed.contains(id)).collect();
+    let top: Vec<usize> = (0..nodes.len()).filter(|id| !claimed.contains(id)).collect();
     let mut s = String::new();
     s.push_str("module {\n");
     s.push_str(&format!("  func.func @main({}){} {{\n", params.join(", "), signature));
-    write_region(&mut s, &top, &tracer.nodes, 4);
+    write_region(&mut s, &top, nodes, 4);
     s.push_str(&ret);
     s.push_str("  }\n}\n");
     s

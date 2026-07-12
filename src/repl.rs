@@ -118,6 +118,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         prints: Vec::new(),
         inputs: Vec::new(),
         saves: Vec::new(),
+        exports: Vec::new(),
         modules: session.modules.clone(),
         statics: Vec::new(),
         rng: session.rng,
@@ -156,10 +157,14 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
     for spec in &tracer.saves {
         outputs.extend(spec.vals.iter().cloned());
     }
+    for spec in &tracer.exports {
+        outputs.extend(spec.weight_vals.iter().cloned());
+    }
 
     let mut results: Vec<Tensor> = Vec::new();
     if !outputs.is_empty() {
-        let module = build_module(&tracer, &outputs);
+        let params: Vec<usize> = tracer.inputs.iter().map(|&(_, id)| id).collect();
+        let module = build_module(&tracer.nodes, &params, &outputs);
         let feeds = tracer.inputs.iter()
             .map(|(src, id)| match src {
                 InputSource::Npy(path) => input_host_buffer(&InputSpec {
@@ -198,6 +203,10 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
     for spec in &tracer.saves {
         let tensors: Vec<Tensor> = spec.names.iter().map(|_| results.next().unwrap()).collect();
         write_save(spec, &tensors);
+    }
+    for spec in &tracer.exports {
+        let tensors: Vec<Tensor> = spec.weight_vals.iter().map(|_| results.next().unwrap()).collect();
+        crate::export::write_export(spec, &tensors);
     }
 
     let mut captured = captured.into_iter();

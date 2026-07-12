@@ -298,6 +298,19 @@ impl Tracer {
                 self.plan_save(&v, &path);
                 v
             }
+            "export" => {
+                if args.len() < 2 {
+                    die("export expects (model, \"path\", example inputs...)");
+                }
+                let path = match &args[1] {
+                    Expr::Str(s) => s.clone(),
+                    _ => die("export expects a file path string literal"),
+                };
+                let v = self.trace(&args[0], env, fns);
+                let examples: Vec<TVal> = args[2..].iter().map(|a| self.trace(a, env, fns)).collect();
+                self.plan_export(&v, &path, examples, fns);
+                v
+            }
             "load" => {
                 if args.len() != 1 {
                     die(&format!("load expects 1 arg, got {}", args.len()));

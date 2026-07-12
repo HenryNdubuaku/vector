@@ -19,4 +19,6 @@
 *.swp
 *.lock
 *.safetensors
+*.mlir
+*.npy
 tests/cases/data/
