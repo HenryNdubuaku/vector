@@ -4,6 +4,7 @@ mod emit;
 mod export;
 mod grad;
 mod graph;
+mod image;
 mod lexer;
 mod linear;
 mod npy;
@@ -138,11 +139,12 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
             outputs.push(series.x.clone());
             outputs.push(series.y.clone());
         }
+        outputs.extend(fig.images.iter().cloned());
     }
     let labels: Vec<Option<String>> = tracer.prints.iter().map(|(l, _)| l.clone()).collect();
     let specs: Vec<InputSpec> = tracer.inputs.iter()
         .map(|(src, id)| match src {
-            graph::InputSource::Npy(path) => InputSpec {
+            graph::InputSource::Npy(path) | graph::InputSource::Image(path) => InputSpec {
                 path: path.clone(),
                 entry: None,
                 shape: tracer.nodes[*id].shape.clone(),
@@ -188,7 +190,8 @@ fn run(path: &str) {
         export::write_export(spec, &tensors);
     }
     for (i, fig) in figures.iter().enumerate() {
-        let tensors: Vec<_> = (0..fig.series.len() * 2).map(|_| results.next().unwrap()).collect();
+        let count = fig.series.len() * 2 + fig.images.len();
+        let tensors: Vec<_> = (0..count).map(|_| results.next().unwrap()).collect();
         let written = plot::write_figure(fig, &tensors, i);
         if fig.path.is_none() {
             open_figure(&written);

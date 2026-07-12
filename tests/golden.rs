@@ -276,6 +276,52 @@ fn csv_empty_cell_fails_loud() {
 }
 
 #[test]
+fn png_load_decodes_reference_files() {
+    let out = run_vector_src("vector_png_load.vec",
+        "g = load(\"tests/fixtures/gray.png\")\nprint(g * 255.0)\np = load(\"tests/fixtures/pal.png\")\nprint(p)\nf = load(\"tests/fixtures/filtered.png\")\nprint(f * 255.0)\nimg = load(\"tests/fixtures/gradient.png\")\nprint(crop(img, 0, 0, 1, 2) * 255.0)\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "[[0, 64], [128, 255]] : f32\n\
+         [[[1, 0, 0], [0, 0, 1]]] : f32\n\
+         [[10, 30], [15, 40]] : f32\n\
+         [[[0, 0, 0], [8, 0, 4]]] : f32\n"
+    );
+}
+
+#[test]
+fn png_save_roundtrip() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let a = run_vector_src("vector_png_a.vec",
+        "img = [[0.0, 0.2], [0.8, 1.0]] * 1.0\nsave(img, \"tests/cases/data/rt.png\")\nprint(img)\n");
+    assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
+    let b = run_vector_src("vector_png_b.vec",
+        "print(load(\"tests/cases/data/rt.png\") * 255.0)\n");
+    assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+    assert_eq!(String::from_utf8(b.stdout).unwrap(), "[[0, 51], [204, 255]] : f32\n");
+}
+
+#[test]
+fn imshow_embeds_png_in_svg() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let out = run_vector_src("vector_imshow.vec",
+        "imshow(load(\"tests/fixtures/gradient.png\"))\ntitle(\"gradient\")\nsavefig(\"tests/cases/data/img.svg\")\nprint(1.0)\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let svg = fs::read_to_string("tests/cases/data/img.svg").unwrap();
+    assert!(svg.contains("<image "), "{}", svg);
+    assert!(svg.contains("data:image/png;base64,"), "{}", svg);
+    assert!(svg.contains(">gradient</text>"), "{}", svg);
+}
+
+#[test]
+fn jpeg_fails_loud() {
+    let out = run_vector_src("vector_jpeg.vec", "print(load(\"photo.jpg\"))\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("convert to png"), "{}", stderr);
+}
+
+#[test]
 fn plot_writes_svg() {
     fs::create_dir_all("tests/cases/data").unwrap();
     let out = run_vector_src("vector_plot.vec",

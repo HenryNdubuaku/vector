@@ -36,6 +36,7 @@ pub enum InputSource {
     Npy(String),
     Safetensors(String, String),
     Csv(String, String),
+    Image(String),
     Live(String),
 }
 

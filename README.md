@@ -2,8 +2,6 @@
 
 Programming language for machine learning, built on top of XLA compiler.
 
-## Overview
-
 ```python
 
 # vector is designed for machine learning 
@@ -65,6 +63,13 @@ plot(inputs, model(inputs), "mlp")
 title("sin approximation")
 savefig("sin.svg")
 
+# vector loads, resizes, crops and saves png images as tensors
+surface = 0.5 + 0.5 * matmul(targets, reshape(targets, 1, n))
+save(resize(surface, 32, 32), "surface.png")
+imshow(load("surface.png"))
+title("sin(x) * sin(y)")
+savefig("surface.svg")
+
 # export the stableHLO: emits stableHLO text
 export(model, "mlp.mlir", eval_inputs)
 
@@ -90,10 +95,16 @@ vector filename.vec
 
 ## Roadmap
 
-- pillow 
+- file imports
 - neuron (trainium) and metal backends
 - test on GPU
 - test on TPU 
+- July 2026: Parity with Python libs, integrate into XLA/Python/ML ecosystem. 
+- August 2026: Vector notebooks, integrate into academic curriculums. 
+- September 2026: Large-scale distributed ML, integrate into enterprises. 
+- October 2026: Vector libraries, ecosystem partnerships.
+- November 2026: Self-Hosting, workshops & developer events.
+- December 2026: Release v1
 
 ## Contributing
 

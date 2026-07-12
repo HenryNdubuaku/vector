@@ -20,6 +20,7 @@ pub struct FigureSpec {
     pub xlabel: Option<String>,
     pub ylabel: Option<String>,
     pub series: Vec<SeriesSpec>,
+    pub images: Vec<Val>,
 }
 
 fn plot_vec(v: TVal, what: &str) -> Val {
@@ -43,6 +44,9 @@ impl Tracer {
         let what = if scatter { "scatter" } else { "plot" };
         if self.region_depth > 0 {
             die(&format!("{} inside a for loop isn't supported (loops compile to one XLA while op); {} after the loop", what, what));
+        }
+        if !self.figure.images.is_empty() {
+            die("imshow and plot in the same figure isn't supported");
         }
         let ret = data.last().unwrap().clone();
         let mut vals: Vec<Val> = data.into_iter().map(|v| plot_vec(v, what)).collect();
@@ -71,12 +75,37 @@ impl Tracer {
         }
     }
 
+    pub fn imshow(&mut self, v: TVal) -> TVal {
+        if self.region_depth > 0 {
+            die("imshow inside a for loop isn't supported (loops compile to one XLA while op); imshow after the loop");
+        }
+        let b = match &v {
+            TVal::Tensor(b) => b.clone(),
+            TVal::Record(..) => die("imshow expects an image tensor"),
+        };
+        if b.bdims != 0 {
+            die("imshow inside vmap isn't supported");
+        }
+        if b.val.dtype == Dtype::I1 {
+            die("cannot show booleans; use where to select values");
+        }
+        crate::image::image_shape(&b.val.shape, "imshow");
+        if !self.figure.series.is_empty() {
+            die("imshow and plot in the same figure isn't supported");
+        }
+        if !self.figure.images.is_empty() {
+            die("one imshow per figure; call savefig or show between images");
+        }
+        self.figure.images.push(b.val);
+        v
+    }
+
     pub fn finish_figure(&mut self, path: Option<String>) {
         if self.region_depth > 0 {
             die("savefig inside a for loop isn't supported (loops compile to one XLA while op); savefig after the loop");
         }
-        if self.figure.series.is_empty() {
-            die("savefig without any plot; call plot or scatter first");
+        if self.figure.series.is_empty() && self.figure.images.is_empty() {
+            die("savefig without any plot; call plot, scatter or imshow first");
         }
         if let Some(p) = &path {
             if !p.ends_with(".svg") {
@@ -147,7 +176,82 @@ fn pad_range(lo: f64, hi: f64) -> (f64, f64) {
     }
 }
 
+fn decorations(fig: &FigureSpec, s: &mut String, ml: f64, pw: f64, mt: f64, ph: f64, h: f64) {
+    if let Some(t) = &fig.title {
+        s.push_str(&format!(
+            "<text x=\"{:.2}\" y=\"27\" font-size=\"15\" font-weight=\"600\" fill=\"#111\" text-anchor=\"middle\">{}</text>\n",
+            ml + pw / 2.0, escape(t)
+        ));
+    }
+    if let Some(t) = &fig.xlabel {
+        s.push_str(&format!(
+            "<text x=\"{:.2}\" y=\"{:.2}\" font-size=\"13\" fill=\"#333\" text-anchor=\"middle\">{}</text>\n",
+            ml + pw / 2.0, h - 12.0, escape(t)
+        ));
+    }
+    if let Some(t) = &fig.ylabel {
+        let cy = mt + ph / 2.0;
+        s.push_str(&format!(
+            "<text x=\"16\" y=\"{cy:.2}\" font-size=\"13\" fill=\"#333\" text-anchor=\"middle\" transform=\"rotate(-90 16 {cy:.2})\">{}</text>\n",
+            escape(t)
+        ));
+    }
+}
+
+fn render_image(fig: &FigureSpec, t: &Tensor) -> String {
+    let (w, h) = (640.0, 480.0);
+    let (ml, mr, mt, mb) = (62.0, 22.0, 44.0, 50.0);
+    let (pw, ph) = (w - ml - mr, h - mt - mb);
+    let (ih, iw, c, pixels) = crate::image::image_bytes(t);
+    let png = crate::image::encode_png(iw, ih, c, &pixels);
+    let b64 = crate::image::base64(&png);
+    let scale = (pw / iw as f64).min(ph / ih as f64);
+    let (dw, dh) = (iw as f64 * scale, ih as f64 * scale);
+    let (ix, iy) = (ml + (pw - dw) / 2.0, mt + (ph - dh) / 2.0);
+    let mut s = String::new();
+    s.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\" font-family=\"Helvetica, Arial, sans-serif\">\n"
+    ));
+    s.push_str(&format!("<rect width=\"{w}\" height=\"{h}\" fill=\"white\"/>\n"));
+    s.push_str(&format!(
+        "<image x=\"{ix:.2}\" y=\"{iy:.2}\" width=\"{dw:.2}\" height=\"{dh:.2}\" preserveAspectRatio=\"none\" style=\"image-rendering:pixelated\" href=\"data:image/png;base64,{b64}\"/>\n"
+    ));
+    s.push_str(&format!(
+        "<rect x=\"{ix:.2}\" y=\"{iy:.2}\" width=\"{dw:.2}\" height=\"{dh:.2}\" fill=\"none\" stroke=\"#333\"/>\n"
+    ));
+    let (xticks, xstep) = ticks(0.0, iw as f64);
+    for tk in &xticks {
+        let px = ix + tk / iw as f64 * dw;
+        s.push_str(&format!(
+            "<line x1=\"{px:.2}\" y1=\"{:.2}\" x2=\"{px:.2}\" y2=\"{:.2}\" stroke=\"#333\"/>\n",
+            iy + dh, iy + dh + 4.0
+        ));
+        s.push_str(&format!(
+            "<text x=\"{px:.2}\" y=\"{:.2}\" font-size=\"11\" fill=\"#333\" text-anchor=\"middle\">{}</text>\n",
+            iy + dh + 17.0, fmt_tick(*tk, xstep)
+        ));
+    }
+    let (yticks, ystep) = ticks(0.0, ih as f64);
+    for tk in &yticks {
+        let py = iy + tk / ih as f64 * dh;
+        s.push_str(&format!(
+            "<line x1=\"{:.2}\" y1=\"{py:.2}\" x2=\"{ix:.2}\" y2=\"{py:.2}\" stroke=\"#333\"/>\n",
+            ix - 4.0
+        ));
+        s.push_str(&format!(
+            "<text x=\"{:.2}\" y=\"{:.2}\" font-size=\"11\" fill=\"#333\" text-anchor=\"end\">{}</text>\n",
+            ix - 8.0, py + 4.0, fmt_tick(*tk, ystep)
+        ));
+    }
+    decorations(fig, &mut s, ml, pw, mt, ph, h);
+    s.push_str("</svg>\n");
+    s
+}
+
 fn render(fig: &FigureSpec, tensors: &[Tensor]) -> String {
+    if !fig.images.is_empty() {
+        return render_image(fig, &tensors[fig.series.len() * 2]);
+    }
     let (w, h) = (640.0, 480.0);
     let (ml, mr, mt, mb) = (62.0, 22.0, 44.0, 50.0);
     let (pw, ph) = (w - ml - mr, h - mt - mb);
@@ -258,25 +362,7 @@ fn render(fig: &FigureSpec, tensors: &[Tensor]) -> String {
             ));
         }
     }
-    if let Some(t) = &fig.title {
-        s.push_str(&format!(
-            "<text x=\"{:.2}\" y=\"27\" font-size=\"15\" font-weight=\"600\" fill=\"#111\" text-anchor=\"middle\">{}</text>\n",
-            ml + pw / 2.0, escape(t)
-        ));
-    }
-    if let Some(t) = &fig.xlabel {
-        s.push_str(&format!(
-            "<text x=\"{:.2}\" y=\"{:.2}\" font-size=\"13\" fill=\"#333\" text-anchor=\"middle\">{}</text>\n",
-            ml + pw / 2.0, h - 12.0, escape(t)
-        ));
-    }
-    if let Some(t) = &fig.ylabel {
-        let cy = mt + ph / 2.0;
-        s.push_str(&format!(
-            "<text x=\"16\" y=\"{cy:.2}\" font-size=\"13\" fill=\"#333\" text-anchor=\"middle\" transform=\"rotate(-90 16 {cy:.2})\">{}</text>\n",
-            escape(t)
-        ));
-    }
+    decorations(fig, &mut s, ml, pw, mt, ph, h);
     s.push_str("</svg>\n");
     s
 }

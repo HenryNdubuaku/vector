@@ -319,6 +319,10 @@ pub fn write_save(spec: &SaveSpec, tensors: &[Tensor]) {
         crate::table::write_csv(spec, tensors);
         return;
     }
+    if spec.path.ends_with(".png") {
+        crate::image::write_png(&spec.path, &tensors[0]);
+        return;
+    }
     let mut parts: Vec<String> = Vec::new();
     if !spec.metadata.is_empty() {
         let kv: Vec<String> = spec.metadata.iter()
@@ -474,8 +478,20 @@ impl Tracer {
             }
         } else if path.ends_with(".csv") {
             spec = crate::table::csv_save_spec(self, v, path);
+        } else if path.ends_with(".png") {
+            match v {
+                TVal::Tensor(b) => {
+                    check_leaf(b, path);
+                    crate::image::image_shape(&b.val.shape, "save to .png");
+                    let val = self.convert(&b.val, Dtype::F32);
+                    spec.names.push(String::new());
+                    spec.vals.push(b.val.clone());
+                    spec.value = TVal::Tensor(BVal { val, bdims: 0 });
+                }
+                TVal::Record(..) => die("save to .png expects an image tensor"),
+            }
         } else {
-            die("save expects a path ending in .npy, .safetensors or .csv");
+            die("save expects a path ending in .npy, .safetensors, .csv or .png");
         }
         self.saves.push(spec);
     }

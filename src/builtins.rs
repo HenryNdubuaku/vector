@@ -376,6 +376,12 @@ impl Tracer {
                 if path.ends_with(".csv") {
                     return self.load_csv(&path);
                 }
+                if path.ends_with(".png") {
+                    return self.load_png(&path);
+                }
+                if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+                    die("jpeg isn't supported; convert to png");
+                }
                 if let Some(&(_, id)) = self.inputs.iter()
                     .find(|(src, _)| matches!(src, InputSource::Npy(p) if *p == path)) {
                     return TVal::Tensor(BVal { val: self.val(id), bdims: 0 });
@@ -384,6 +390,33 @@ impl Tracer {
                 let val = self.emit(OpKind::Input, vec![], shape, dtype);
                 self.inputs.push((InputSource::Npy(path), val.id));
                 TVal::Tensor(BVal { val, bdims: 0 })
+            }
+            "resize" => {
+                if args.len() != 3 {
+                    die(&format!("resize expects (image, height, width), got {} args", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns).tensor("resize");
+                let h = self.int_lit(&args[1], env, "resize height");
+                let w = self.int_lit(&args[2], env, "resize width");
+                self.resize_image(v, h, w)
+            }
+            "crop" => {
+                if args.len() != 5 {
+                    die(&format!("crop expects (image, top, left, height, width), got {} args", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns).tensor("crop");
+                let top = self.int_lit(&args[1], env, "crop top");
+                let left = self.int_lit(&args[2], env, "crop left");
+                let h = self.int_lit(&args[3], env, "crop height");
+                let w = self.int_lit(&args[4], env, "crop width");
+                self.crop_image(v, top, left, h, w)
+            }
+            "imshow" => {
+                if args.len() != 1 {
+                    die(&format!("imshow expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns);
+                self.imshow(v)
             }
             "transpose" => {
                 if args.len() != 1 {

@@ -46,9 +46,15 @@ save({x: inputs, sin: targets, mlp: model(inputs)}, "predictions.csv")
 table = load("predictions.csv")
 print(mean(table.mlp - table.sin))
 
-export(model, "mlp.mlir", eval_inputs)
-
 plot(inputs, targets, "sin")
 plot(inputs, model(inputs), "mlp")
 title("sin approximation")
 savefig("sin.svg")
+
+surface = 0.5 + 0.5 * matmul(targets, reshape(targets, 1, n))
+save(resize(surface, 32, 32), "surface.png")
+imshow(load("surface.png"))
+title("sin(x) * sin(y)")
+savefig("surface.svg")
+
+export(model, "mlp.mlir", eval_inputs)

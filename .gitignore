@@ -23,4 +23,6 @@
 *.npy
 *.svg
 *.csv
+*.png
+!tests/fixtures/*.png
 tests/cases/data/
