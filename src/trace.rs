@@ -4,11 +4,13 @@ use crate::batch::{collect_leaves, rebuild, tval_sig};
 use crate::die;
 use crate::graph::{BVal, Dtype, InputSource, Node, OpKind, TVal, Val};
 use crate::parser::{Decl, Expr, ModuleDecl};
+use crate::safetensors::SaveSpec;
 
 pub struct Tracer {
     pub nodes: Vec<Node>,
     pub prints: Vec<(Option<String>, Val)>,
     pub inputs: Vec<(InputSource, usize)>,
+    pub saves: Vec<SaveSpec>,
     pub modules: HashMap<String, ModuleDecl>,
     pub statics: Vec<HashMap<String, f64>>,
     pub rng: u64,

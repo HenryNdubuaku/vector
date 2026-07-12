@@ -286,6 +286,18 @@ impl Tracer {
                 let b = self.trace(&args[1], env, fns);
                 self.tmap2(name, a, b)
             }
+            "save" => {
+                if args.len() != 2 {
+                    die(&format!("save expects (value, \"path\"), got {} args", args.len()));
+                }
+                let path = match &args[1] {
+                    Expr::Str(s) => s.clone(),
+                    _ => die("save expects a file path string literal"),
+                };
+                let v = self.trace(&args[0], env, fns);
+                self.plan_save(&v, &path);
+                v
+            }
             "load" => {
                 if args.len() != 1 {
                     die(&format!("load expects 1 arg, got {}", args.len()));
@@ -294,6 +306,9 @@ impl Tracer {
                     Expr::Str(s) => s.clone(),
                     _ => die("load expects a file path string literal"),
                 };
+                if path.ends_with(".safetensors") {
+                    return self.load_safetensors(&path);
+                }
                 if let Some(&(_, id)) = self.inputs.iter()
                     .find(|(src, _)| matches!(src, InputSource::Npy(p) if *p == path)) {
                     return TVal::Tensor(BVal { val: self.val(id), bdims: 0 });

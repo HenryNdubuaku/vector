@@ -140,6 +140,105 @@ fn matmul_contraction_mismatch_fails() {
     assert!(stderr.contains("matmul"), "{}", stderr);
 }
 
+fn run_vector_src(name: &str, src: &str) -> std::process::Output {
+    let path = std::env::temp_dir().join(name);
+    fs::write(&path, src).unwrap();
+    run_vector(&[path.to_str().unwrap()])
+}
+
+const SCALE_MODULE: &str = "module Scale(k):
+  s = 0.0 + k
+  forward(self, x):
+    self.s * x
+  loss(self, t):
+    d = self([1.0, 2.0]) - t
+    sum(d * d)
+
+";
+
+#[test]
+fn save_and_load_module_roundtrip() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let a = run_vector_src("vector_save_a.vec", &format!(
+        "{}m = Scale(4)\nfor i in 0..5:\n  m = m - 0.05 * grad(m.loss, [3.0, 6.0])\nsave(m, \"tests/cases/data/scale.safetensors\")\nprint(m.loss([3.0, 6.0]))\nprint(m.s)\n",
+        SCALE_MODULE));
+    assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
+    let a_out = String::from_utf8(a.stdout).unwrap();
+    let b = run_vector_src("vector_save_b.vec", &format!(
+        "{}m = load(\"tests/cases/data/scale.safetensors\")\nprint(m.loss([3.0, 6.0]))\nprint(m.s)\nm2 = m - 0.05 * grad(m.loss, [3.0, 6.0])\nprint(m2.s)\n",
+        SCALE_MODULE));
+    assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+    let b_out = String::from_utf8(b.stdout).unwrap();
+    let a_lines: Vec<&str> = a_out.lines().collect();
+    let b_lines: Vec<&str> = b_out.lines().collect();
+    assert_eq!(a_lines[0], b_lines[0], "loss differs after reload");
+    assert_eq!(a_lines[1], b_lines[1], "weights differ after reload");
+    assert_ne!(b_lines[1], b_lines[2], "training from the checkpoint made no progress");
+}
+
+#[test]
+fn save_npy_roundtrip() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let a = run_vector_src("vector_npy_a.vec",
+        "x = [1.0, 2.0, 3.0] * 2.0\nsave(x, \"tests/cases/data/doubled.npy\")\nprint(x)\n");
+    assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
+    let b = run_vector_src("vector_npy_b.vec",
+        "print(load(\"tests/cases/data/doubled.npy\") + 1.0)\n");
+    assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+    assert_eq!(String::from_utf8(b.stdout).unwrap(), "[3, 5, 7] : f32\n");
+}
+
+#[test]
+fn load_pytorch_style_names() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let mut header = String::from(
+        "{\"layers.0.weight\":{\"dtype\":\"F32\",\"shape\":[2],\"data_offsets\":[0,8]},\"scale\":{\"dtype\":\"F32\",\"shape\":[],\"data_offsets\":[8,12]}}");
+    while header.len() % 8 != 0 {
+        header.push(' ');
+    }
+    let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+    bytes.extend(header.as_bytes());
+    for x in [1.5f32, 2.5, 3.0] {
+        bytes.extend(x.to_le_bytes());
+    }
+    fs::write("tests/cases/data/foreign.safetensors", bytes).unwrap();
+    let out = run_vector_src("vector_foreign.vec",
+        "p = load(\"tests/cases/data/foreign.safetensors\")\nprint(p.layers._0.weight * p.scale)\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "[4.5, 7.5] : f32\n");
+}
+
+#[test]
+fn save_inside_for_fails_loud() {
+    let out = run_vector_src("vector_save_in_for.vec",
+        "w = 1.0\nfor i in 0..2:\n  w = w * 2.0\n  save(w, \"tests/cases/data/w.npy\")\nprint(w)\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("save inside a for loop"), "{}", stderr);
+}
+
+#[test]
+fn save_record_to_npy_fails_loud() {
+    let out = run_vector_src("vector_save_record_npy.vec",
+        "save({a: 1.0}, \"tests/cases/data/bad.npy\")\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains(".safetensors"), "{}", stderr);
+}
+
+#[test]
+fn load_undefined_module_fails_loud() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let a = run_vector_src("vector_orphan_a.vec",
+        "module Osc(k):\n  c = 0.0 + k\n  forward(self, x):\n    self.c * x\n\no = Osc(2)\nsave(o, \"tests/cases/data/osc.safetensors\")\nprint(o.c)\n");
+    assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
+    let b = run_vector_src("vector_orphan_b.vec",
+        "m = load(\"tests/cases/data/osc.safetensors\")\nprint(m.c)\n");
+    let stderr = String::from_utf8(b.stderr).unwrap();
+    assert!(!b.status.success());
+    assert!(stderr.contains("define module Osc"), "{}", stderr);
+}
+
 fn run_repl_script(script: &str) -> (String, String) {
     use std::io::Write;
     use std::process::Stdio;
@@ -178,6 +277,15 @@ w
 ";
     let (stdout, stderr) = run_repl_script(script);
     assert_eq!(stdout, "[3, 4] : f32\n", "stderr: {}", stderr);
+}
+
+#[test]
+fn repl_saves_and_loads() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let (stdout, stderr) = run_repl_script(
+        "x = [1.0, 2.0]\nq = save({v: x * 2.0}, \"tests/cases/data/repl.safetensors\")\np = load(\"tests/cases/data/repl.safetensors\")\np.v\n",
+    );
+    assert_eq!(stdout, "[2, 4] : f32\n", "stderr: {}", stderr);
 }
 
 #[test]

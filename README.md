@@ -58,12 +58,12 @@ vector filename.vec
 ```
 
 `load` reads `.npy` files (little-endian f32/f64, C order); the tensor becomes a runtime input to the compiled program, so shapes stay static. 
+`save(model, "model.safetensors")` writes weights as safetensors with the module structure in the header metadata; `load("model.safetensors")` returns the instance — callable and trainable — as long as its module is defined in the program. PyTorch state_dicts load as plain records (numeric path components like `layers.0` become `layers._0`). Single tensors save to `.npy`. 
 Output comes only from `print`. Transforms: `grad`, `vmap` (nestable), `jacobian`. 
-Loops (`for i in 0..n:`) unroll at trace time, so gradients flow through them; `where(cond, a, b)` selects elementwise with comparisons `< > <= >=`.
+Loops (`for i in 0..n:`) compile to one XLA while op (and unroll under `grad`, so gradients flow through them); `where(cond, a, b)` selects elementwise with comparisons `< > <= >=`.
 
 
 ## TO-DO:
 
-- export/load model 
 - plot 
 - neuron (trainium) and metal backends

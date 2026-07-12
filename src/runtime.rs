@@ -4,7 +4,7 @@ use pjrt::ProgramFormat::MLIR;
 use pjrt::{Buffer, Client, HostBuffer, LoadedExecutable};
 
 use crate::graph::Dtype;
-use crate::npy::{npy_host_buffer, InputSpec};
+use crate::npy::{input_host_buffer, InputSpec};
 use crate::{die, home, plugin_path};
 
 pub struct Engine {
@@ -126,6 +126,13 @@ impl Tensor {
         }
     }
 
+    pub fn le_bytes(&self) -> Vec<u8> {
+        match &self.data {
+            TensorData::F32(v) => v.iter().flat_map(|x| x.to_le_bytes()).collect(),
+            TensorData::F64(v) => v.iter().flat_map(|x| x.to_le_bytes()).collect(),
+        }
+    }
+
     fn dtype(&self) -> &'static str {
         match &self.data {
             TensorData::F32(_) => "f32",
@@ -145,7 +152,7 @@ fn host_tensor(h: HostBuffer) -> Tensor {
 
 pub fn execute(mlir: &str, specs: &[InputSpec]) -> Vec<Tensor> {
     let engine = Engine::new();
-    let feeds: Vec<HostBuffer> = specs.iter().map(npy_host_buffer).collect();
+    let feeds: Vec<HostBuffer> = specs.iter().map(input_host_buffer).collect();
     engine.execute(mlir, feeds)
 }
 

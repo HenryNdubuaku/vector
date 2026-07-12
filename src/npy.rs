@@ -5,10 +5,12 @@ use pjrt::HostBuffer;
 
 use crate::die;
 use crate::graph::Dtype;
+use crate::runtime::Tensor;
 
 #[derive(Debug, Clone)]
 pub struct InputSpec {
     pub path: String,
+    pub entry: Option<String>,
     pub shape: Vec<usize>,
     pub dtype: Dtype,
 }
@@ -63,7 +65,25 @@ pub fn npy_meta(path: &str) -> (Vec<usize>, Dtype, usize) {
     (shape, dtype, data_offset)
 }
 
-pub fn npy_host_buffer(spec: &InputSpec) -> HostBuffer {
+pub fn host_buffer(dtype: Dtype, shape: &[usize], data: &[u8]) -> HostBuffer {
+    let dims: Vec<i64> = shape.iter().map(|&d| d as i64).collect();
+    match dtype {
+        Dtype::F32 => {
+            let vals: Vec<f32> = data.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
+            HostBuffer::from_data(vals, Some(dims), None)
+        }
+        Dtype::F64 => {
+            let vals: Vec<f64> = data.chunks_exact(8).map(|c| f64::from_le_bytes(c.try_into().unwrap())).collect();
+            HostBuffer::from_data(vals, Some(dims), None)
+        }
+        Dtype::I1 | Dtype::I64 => unreachable!(),
+    }
+}
+
+pub fn input_host_buffer(spec: &InputSpec) -> HostBuffer {
+    if let Some(name) = &spec.entry {
+        return crate::safetensors::tensor_host_buffer(&spec.path, name, &spec.shape, spec.dtype);
+    }
     let (shape, dtype, offset) = npy_meta(&spec.path);
     if shape != spec.shape || dtype != spec.dtype {
         die(&format!("{} changed since compilation: {:?} {} vs {:?} {}",
@@ -77,17 +97,28 @@ pub fn npy_host_buffer(spec: &InputSpec) -> HostBuffer {
         die(&format!("{} is truncated: expected {} data bytes, found {}",
                      spec.path, count * size, bytes.len() - offset));
     }
-    let data = &bytes[offset..offset + count * size];
-    let dims: Vec<i64> = shape.iter().map(|&d| d as i64).collect();
-    match dtype {
-        Dtype::F32 => {
-            let vals: Vec<f32> = data.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
-            HostBuffer::from_data(vals, Some(dims), None)
-        }
-        Dtype::F64 => {
-            let vals: Vec<f64> = data.chunks_exact(8).map(|c| f64::from_le_bytes(c.try_into().unwrap())).collect();
-            HostBuffer::from_data(vals, Some(dims), None)
-        }
-        Dtype::I1 | Dtype::I64 => unreachable!(),
-    }
+    host_buffer(dtype, &shape, &bytes[offset..offset + count * size])
+}
+
+pub fn write_npy(path: &str, t: &Tensor) {
+    let descr = match t.graph_dtype() {
+        Dtype::F32 => "<f4",
+        Dtype::F64 => "<f8",
+        _ => unreachable!("saves are checked at trace time"),
+    };
+    let dims: Vec<String> = t.shape().iter().map(|d| d.to_string()).collect();
+    let shape = match dims.len() {
+        0 => "()".to_string(),
+        1 => format!("({},)", dims[0]),
+        _ => format!("({})", dims.join(", ")),
+    };
+    let mut header = format!("{{'descr': '{}', 'fortran_order': False, 'shape': {}, }}", descr, shape);
+    let pad = (64 - (10 + header.len() + 1) % 64) % 64;
+    header.push_str(&" ".repeat(pad));
+    header.push('\n');
+    let mut bytes = b"\x93NUMPY\x01\x00".to_vec();
+    bytes.extend((header.len() as u16).to_le_bytes());
+    bytes.extend(header.as_bytes());
+    bytes.extend(t.le_bytes());
+    fs::write(path, bytes).unwrap_or_else(|e| die(&format!("cannot write {}: {}", path, e)));
 }

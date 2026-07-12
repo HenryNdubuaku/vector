@@ -6,9 +6,10 @@ use crate::emit::build_module;
 use crate::graph::{Dtype, InputSource, ModTag, OpKind, TVal, Val};
 use crate::lexer::{lex, Tok};
 use crate::linear;
-use crate::npy::{npy_host_buffer, npy_meta, InputSpec};
+use crate::npy::{input_host_buffer, InputSpec};
 use crate::parser::{Decl, Expr, ModuleDecl, Parser};
 use crate::runtime::{format_tensor, Engine, Tensor};
+use crate::safetensors::write_save;
 use crate::trace::Tracer;
 
 enum SessionVal {
@@ -116,6 +117,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         nodes: Vec::new(),
         prints: Vec::new(),
         inputs: Vec::new(),
+        saves: Vec::new(),
         modules: session.modules.clone(),
         statics: Vec::new(),
         rng: session.rng,
@@ -151,17 +153,27 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         let tv = env[name].clone();
         plan_binding(&tracer, &tv, &mut metas, &mut outputs);
     }
+    for spec in &tracer.saves {
+        outputs.extend(spec.vals.iter().cloned());
+    }
 
     let mut results: Vec<Tensor> = Vec::new();
     if !outputs.is_empty() {
         let module = build_module(&tracer, &outputs);
         let feeds = tracer.inputs.iter()
             .map(|(src, id)| match src {
-                InputSource::Npy(path) => {
-                    let (shape, dtype, _) = npy_meta(path);
-                    let _ = id;
-                    npy_host_buffer(&InputSpec { path: path.clone(), shape, dtype })
-                }
+                InputSource::Npy(path) => input_host_buffer(&InputSpec {
+                    path: path.clone(),
+                    entry: None,
+                    shape: tracer.nodes[*id].shape.clone(),
+                    dtype: tracer.nodes[*id].dtype,
+                }),
+                InputSource::Safetensors(path, name) => input_host_buffer(&InputSpec {
+                    path: path.clone(),
+                    entry: Some(name.clone()),
+                    shape: tracer.nodes[*id].shape.clone(),
+                    dtype: tracer.nodes[*id].dtype,
+                }),
                 InputSource::Live(key) => feed_map[key].to_host_buffer(),
             })
             .collect();
@@ -181,6 +193,11 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
             }
             Meta::Capture => captured.push(results.next().unwrap()),
         }
+    }
+
+    for spec in &tracer.saves {
+        let tensors: Vec<Tensor> = spec.names.iter().map(|_| results.next().unwrap()).collect();
+        write_save(spec, &tensors);
     }
 
     let mut captured = captured.into_iter();

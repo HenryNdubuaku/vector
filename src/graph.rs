@@ -34,6 +34,7 @@ pub fn per_shape(v: &BVal) -> Vec<usize> {
 #[derive(Debug, Clone)]
 pub enum InputSource {
     Npy(String),
+    Safetensors(String, String),
     Live(String),
 }
 

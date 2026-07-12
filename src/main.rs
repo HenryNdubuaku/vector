@@ -9,6 +9,7 @@ mod npy;
 mod parser;
 mod repl;
 mod runtime;
+mod safetensors;
 mod trace;
 
 use std::collections::HashMap;
@@ -21,6 +22,7 @@ use lexer::lex;
 use npy::InputSpec;
 use parser::Parser;
 use runtime::{execute, format_tensor};
+use safetensors::SaveSpec;
 use trace::Tracer;
 
 const USAGE: &str = "usage: vector [file.vec]
@@ -83,7 +85,7 @@ fn plugin_path() -> String {
     die("no PJRT plugin found; run `vector setup` or set PJRT_PLUGIN_PATH");
 }
 
-fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>) {
+fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<SaveSpec>) {
     let src = fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
@@ -103,6 +105,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>) {
         nodes: Vec::new(),
         prints: Vec::new(),
         inputs: Vec::new(),
+        saves: Vec::new(),
         modules,
         statics: Vec::new(),
         rng: 0x243F6A8885A308D3,
@@ -112,28 +115,44 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>) {
         interned: vec![HashMap::new()],
     };
     tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
-    let outputs: Vec<_> = tracer.prints.iter().map(|(_, v)| v.clone()).collect();
+    let mut outputs: Vec<_> = tracer.prints.iter().map(|(_, v)| v.clone()).collect();
+    for spec in &tracer.saves {
+        outputs.extend(spec.vals.iter().cloned());
+    }
     let labels: Vec<Option<String>> = tracer.prints.iter().map(|(l, _)| l.clone()).collect();
     let specs: Vec<InputSpec> = tracer.inputs.iter()
         .map(|(src, id)| match src {
             graph::InputSource::Npy(path) => InputSpec {
                 path: path.clone(),
+                entry: None,
+                shape: tracer.nodes[*id].shape.clone(),
+                dtype: tracer.nodes[*id].dtype,
+            },
+            graph::InputSource::Safetensors(path, name) => InputSpec {
+                path: path.clone(),
+                entry: Some(name.clone()),
                 shape: tracer.nodes[*id].shape.clone(),
                 dtype: tracer.nodes[*id].dtype,
             },
             graph::InputSource::Live(_) => die("internal: live input outside the repl"),
         })
         .collect();
-    (build_module(&tracer, &outputs), specs, labels)
+    (build_module(&tracer, &outputs), specs, labels, tracer.saves)
 }
 
 fn run(path: &str) {
-    let (module, specs, labels) = compile(path);
-    for (label, tensor) in labels.iter().zip(execute(&module, &specs)) {
+    let (module, specs, labels, saves) = compile(path);
+    let mut results = execute(&module, &specs).into_iter();
+    for label in &labels {
+        let tensor = results.next().unwrap();
         match label {
             Some(l) => println!("{}: {}", l, format_tensor(&tensor)),
             None => println!("{}", format_tensor(&tensor)),
         }
+    }
+    for spec in &saves {
+        let tensors: Vec<_> = spec.names.iter().map(|_| results.next().unwrap()).collect();
+        safetensors::write_save(spec, &tensors);
     }
 }
 
