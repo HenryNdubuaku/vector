@@ -41,7 +41,7 @@ const USAGE: &str = "usage: vector [file.vec]
   vector                        start the interactive repl
   vector <file.vec>             compile and run a program
   vector serve <m.mlir> [port]  serve an exported model over http (default port 8080)
-  vector setup [b]              download a PJRT plugin to ~/.vector (cpu, cuda, rocm, oneapi, tpu)
+  vector setup                  detect this machine and install the right backends
   vector version                print version";
 
 struct VectorError(String);
@@ -249,11 +249,46 @@ fn run(path: &str) {
     }
 }
 
-fn setup(backend: &str) {
-    if !matches!(backend, "cpu" | "cuda" | "rocm" | "oneapi" | "tpu") {
-        die(&format!("unknown backend: {} (expected cpu, cuda, rocm, oneapi or tpu)", backend));
+fn detect_backends() -> Vec<&'static str> {
+    let mut backends = vec!["cpu"];
+    match env::consts::OS {
+        "macos" => backends.push("metal"),
+        "linux" => {
+            if fs::metadata("/dev/nvidia0").is_ok() || fs::metadata("/proc/driver/nvidia").is_ok() {
+                backends.push("cuda");
+            } else if fs::metadata("/dev/kfd").is_ok() {
+                backends.push("rocm");
+            }
+            if fs::metadata("/dev/accel0").is_ok() {
+                backends.push("tpu");
+            }
+        }
+        _ => {}
     }
-    if backend != "cpu" && env::consts::OS != "linux" {
+    backends
+}
+
+fn setup_auto() {
+    let backends = detect_backends();
+    println!("detected backends: {}", backends.join(", "));
+    for backend in backends {
+        if fs::metadata(backend_path(backend)).is_ok() {
+            println!("{} already installed", backend);
+            continue;
+        }
+        setup(backend);
+    }
+}
+
+fn setup(backend: &str) {
+    if !matches!(backend, "cpu" | "cuda" | "rocm" | "oneapi" | "tpu" | "metal") {
+        die(&format!("unknown backend: {} (expected cpu, cuda, rocm, oneapi, tpu or metal)", backend));
+    }
+    if backend == "metal" {
+        if env::consts::OS != "macos" {
+            die("the metal backend needs macos");
+        }
+    } else if backend != "cpu" && env::consts::OS != "linux" {
         die(&format!("the {} backend needs linux; only cpu is available on {}", backend, env::consts::OS));
     }
     let platform = match (env::consts::OS, env::consts::ARCH) {
@@ -277,6 +312,19 @@ fn setup(backend: &str) {
              curl -fL --progress-bar \"$url\" -o {dir}/libtpu.whl && \
              unzip -p {dir}/libtpu.whl libtpu/libtpu.so > {dir}/libpjrt_tpu.so && \
              rm {dir}/libtpu.whl",
+            dir = dir
+        )
+    } else if backend == "metal" {
+        let tag = if env::consts::ARCH == "aarch64" { "arm64" } else { "x86_64" };
+        format!(
+            "command -v unzip >/dev/null || {{ echo 'vector setup metal needs unzip installed' >&2; exit 1; }}; \
+             url=$(curl -fsSL https://pypi.org/simple/jax-metal/ | grep -o 'https://[^\"#]*{tag}\\.whl' | tail -1); \
+             [ -n \"$url\" ] || {{ echo 'no jax-metal wheel found on pypi' >&2; exit 1; }}; \
+             echo \"downloading $url\" && \
+             curl -fL --progress-bar \"$url\" -o {dir}/jaxmetal.whl && \
+             unzip -p {dir}/jaxmetal.whl 'jax_plugins/metal_plugin/*.dylib' > {dir}/libpjrt_metal.dylib && \
+             rm {dir}/jaxmetal.whl",
+            tag = tag,
             dir = dir
         )
     } else {
@@ -307,7 +355,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let outcome = std::panic::catch_unwind(|| {
         match args.get(1).map(String::as_str) {
-            Some("setup") if args.len() == 2 => setup("cpu"),
+            Some("setup") if args.len() == 2 => setup_auto(),
             Some("setup") if args.len() == 3 => setup(&args[2]),
             Some("serve") if args.len() == 3 => serve::serve(&args[2], 8080),
             Some("serve") if args.len() == 4 => {

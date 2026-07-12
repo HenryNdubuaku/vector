@@ -5,16 +5,22 @@ Programming language for machine learning, built on top of XLA compiler.
 ```python
 
 # vector is designed for machine learning 
-n = 64
-hidden_size = 8
+n = 16000
+hidden_size = 1024
 learning_rate = 0.03
 epochs = 30
+batch_size = 32
+batches = 500
 
 # vector ships numpy-like vectorized functions 
 inputs = reshape(linspace(-pi, pi, n), n, 1)
 targets = sin(inputs)
 eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
 eval_targets = sin(eval_inputs)
+
+# interleave the sorted samples so every batch spans the domain
+shuffled_x = reshape(transpose(reshape(reshape(inputs, n), batch_size, batches)), n, 1)
+shuffled_t = reshape(transpose(reshape(reshape(targets, n), batch_size, batches)), n, 1)
 
 # vector is functional like JAX, but with modules
 module Mlp(hidden):
@@ -29,12 +35,12 @@ module Mlp(hidden):
     mean(error * error)
 
 # vector is bult on XLA compiler
-fn train_epoch(model, inputs, targets, lr):
+fn train_epoch(model, xs, ts, lr, batch, batches):
   m = model
-  for step in 0..1000:
-    offset = mod(step, 4.0) * 16.0
-    x = slice(inputs, offset, 16)
-    t = slice(targets, offset, 16)
+  for step in 0..batches:
+    offset = step * batch
+    x = slice(xs, offset, batch)
+    t = slice(ts, offset, batch)
     m = m - lr * grad(m.loss, x, t)
   m
 
@@ -43,7 +49,7 @@ model = Mlp(hidden_size)
 # vector programs run on Nvidia/AMD/TPUs and more;
 # print inside a loop logs one neat line per iteration
 for epoch in 0..epochs:
-  model = train_epoch(model, inputs, targets, learning_rate)
+  model = train_epoch(model, shuffled_x, shuffled_t, learning_rate, batch_size, batches)
   print(model.loss(inputs, targets))
 
 # vector save weights as safetensors for cross-compatibility
@@ -71,7 +77,8 @@ title("sin approximation")
 savefig("sin.svg")
 
 # vector loads, resizes, crops and saves png images as tensors
-surface = 0.5 + 0.5 * matmul(targets, reshape(targets, 1, n))
+grid = sin(linspace(-pi, pi, 64))
+surface = 0.5 + 0.5 * matmul(reshape(grid, 64, 1), reshape(grid, 1, 64))
 save(resize(surface, 32, 32), "surface.png")
 imshow(load("surface.png"))
 title("sin(x) * sin(y)")
@@ -116,7 +123,6 @@ The server compiles the model once through XLA and answers with `{"outputs": [..
 
 ## Roadmap
 
-- neuron (trainium) and metal backends
 - test on GPU
 - test on TPU 
 - July 2026: Parity with Python libs, integrate into XLA/Python/ML ecosystem. 

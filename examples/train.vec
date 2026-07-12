@@ -2,51 +2,51 @@
 
 import mlp
 
-n = 64
-hidden_size = 8
+n = 16000
+hidden_size = 1024
 learning_rate = 0.03
 epochs = 30
+batch_size = 32
+batches = 500
 
 inputs = reshape(linspace(-pi, pi, n), n, 1)
 targets = sin(inputs)
 eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
 eval_targets = sin(eval_inputs)
 
-fn train_epoch(model, inputs, targets, lr):
+shuffled_x = reshape(transpose(reshape(reshape(inputs, n), batch_size, batches)), n, 1)
+shuffled_t = reshape(transpose(reshape(reshape(targets, n), batch_size, batches)), n, 1)
+
+fn train_epoch(model, xs, ts, lr, batch, batches):
   m = model
-  for step in 0..1000:
-    offset = mod(step, 4.0) * 16.0
-    x = slice(inputs, offset, 16)
-    t = slice(targets, offset, 16)
+  for step in 0..batches:
+    offset = step * batch
+    x = slice(xs, offset, batch)
+    t = slice(ts, offset, batch)
     m = m - lr * grad(m.loss, x, t)
   m
 
 model = Mlp(hidden_size)
 
 for epoch in 0..epochs:
-  model = train_epoch(model, inputs, targets, learning_rate)
+  model = train_epoch(model, shuffled_x, shuffled_t, learning_rate, batch_size, batches)
   print(model.loss(inputs, targets))
 
 save(model, "mlp.safetensors")
 model = load("mlp.safetensors")
 
-print(model.loss(inputs, targets))
-print(model(eval_inputs))
-print(eval_targets)
-
 save(model(eval_inputs), "predictions.npy")
-print(load("predictions.npy") - eval_targets)
 
 save({x: inputs, sin: targets, mlp: model(inputs)}, "predictions.csv")
 table = load("predictions.csv")
-print(mean(table.mlp - table.sin))
 
 plot(inputs, targets, "sin")
 plot(inputs, model(inputs), "mlp")
 title("sin approximation")
 savefig("sin.svg")
 
-surface = 0.5 + 0.5 * matmul(targets, reshape(targets, 1, n))
+grid = sin(linspace(-pi, pi, 64))
+surface = 0.5 + 0.5 * matmul(reshape(grid, 64, 1), reshape(grid, 1, 64))
 save(resize(surface, 32, 32), "surface.png")
 imshow(load("surface.png"))
 title("sin(x) * sin(y)")
