@@ -3,11 +3,11 @@
 import mlp
 
 n = 16000
-hidden_size = 1024
-learning_rate = 0.03
+hidden_size = 10240
+learning_rate = 0.1
 epochs = 30
-batch_size = 32
-batches = 500
+batch_size = 64
+batches = 250
 
 inputs = reshape(linspace(-pi, pi, n), n, 1)
 targets = sin(inputs)
