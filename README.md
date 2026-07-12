@@ -99,7 +99,6 @@ vector filename.vec
 
 ## Roadmap
 
-- file imports
 - requests
 - neuron (trainium) and metal backends
 - test on GPU

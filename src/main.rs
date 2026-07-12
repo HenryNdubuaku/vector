@@ -6,6 +6,7 @@ mod export;
 mod grad;
 mod graph;
 mod image;
+mod imports;
 mod lexer;
 mod linear;
 mod npy;
@@ -98,15 +99,25 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
     let lexed = lex(&src);
     let mut p = Parser {
         repl: false,
+        library: false,
         toks: lexed.toks,
         cols: lexed.cols,
         lines: lexed.lines,
         pos: 0,
+        imports: Vec::new(),
         fns: HashMap::new(),
         modules: HashMap::new(),
     };
     let prog = p.program();
+    let (mut fns, import_modules) = imports::load_libraries(path, &prog.imports);
+    for name in prog.fns.keys().chain(prog.modules.keys()) {
+        if fns.contains_key(name) || import_modules.contains_key(name) {
+            die(&format!("{} is defined in both an import and {}", name, path));
+        }
+    }
+    fns.extend(prog.fns);
     let mut modules = linear::stdlib_modules();
+    modules.extend(import_modules);
     modules.extend(prog.modules);
     let mut tracer = Tracer {
         nodes: Vec::new(),
@@ -125,7 +136,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
         grad_depth: 0,
         interned: vec![HashMap::new()],
     };
-    tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
+    tracer.trace(&prog.main, &HashMap::new(), &fns);
     if !tracer.figure.series.is_empty() {
         die("plot without savefig or show; finish the figure");
     }

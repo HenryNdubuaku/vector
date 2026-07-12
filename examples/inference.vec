@@ -1,0 +1,9 @@
+# Run examples/train.vec first; it trains the network and saves mlp.safetensors.
+
+import "mlp.vec"
+
+model = load("mlp.safetensors")
+
+eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
+print(model(eval_inputs))
+print(sin(eval_inputs))

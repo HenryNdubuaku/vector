@@ -46,6 +46,7 @@ impl ModuleDecl {
 
 #[derive(Debug)]
 pub struct Program {
+    pub imports: Vec<String>,
     pub fns: HashMap<String, Decl>,
     pub modules: HashMap<String, ModuleDecl>,
     pub main: Expr,
@@ -53,10 +54,12 @@ pub struct Program {
 
 pub struct Parser {
     pub repl: bool,
+    pub library: bool,
     pub toks: Vec<Tok>,
     pub cols: Vec<usize>,
     pub lines: Vec<usize>,
     pub pos: usize,
+    pub imports: Vec<String>,
     pub fns: HashMap<String, Decl>,
     pub modules: HashMap<String, ModuleDecl>,
 }
@@ -100,6 +103,7 @@ impl Parser {
         }
         let main = self.body(1);
         Program {
+            imports: std::mem::take(&mut self.imports),
             fns: std::mem::take(&mut self.fns),
             modules: std::mem::take(&mut self.modules),
             main,
@@ -175,6 +179,13 @@ impl Parser {
     fn body(&mut self, indent: usize) -> Expr {
         loop {
             match self.peek() {
+                Some(Tok::Import) => {
+                    self.bump();
+                    match self.bump() {
+                        Some(Tok::Str(s)) => self.imports.push(s),
+                        t => die(&format!("import expects a file path string literal, got {:?}", t)),
+                    }
+                }
                 Some(Tok::Fn) => {
                     let (name, decl) = self.decl();
                     if !self.repl && (self.modules.contains_key(&name) || self.fns.contains_key(&name)) {
@@ -190,7 +201,7 @@ impl Parser {
                     self.modules.insert(name, decl);
                 }
                 None => {
-                    if self.repl {
+                    if self.repl || self.library {
                         return Expr::Unit;
                     }
                     die("expected an expression after declarations");
@@ -210,7 +221,7 @@ impl Parser {
                     let rest = self.body(indent);
                     return Expr::Let(name, Box::new(value), Box::new(rest));
                 }
-                if self.repl {
+                if self.repl || self.library {
                     return Expr::Let(name, Box::new(value), Box::new(Expr::Unit));
                 }
                 die(&format!("binding {} has no body expression", name));
@@ -261,7 +272,7 @@ impl Parser {
             break;
         }
         if !self.body_continues(indent) {
-            if self.repl {
+            if self.repl || self.library {
                 return Expr::For(var, start, end, step, stmts, Box::new(Expr::Unit));
             }
             die("for loop must be followed by an expression");

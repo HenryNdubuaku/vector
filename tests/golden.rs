@@ -313,6 +313,71 @@ fn imshow_embeds_png_in_svg() {
     assert!(svg.contains(">gradient</text>"), "{}", svg);
 }
 
+fn write_temp(name: &str, src: &str) {
+    fs::write(std::env::temp_dir().join(name), src).unwrap();
+}
+
+#[test]
+fn import_shares_module_across_programs() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    write_temp("vector_lib_scale.vec", SCALE_MODULE);
+    let a = run_vector_src("vector_imp_train.vec",
+        "import \"vector_lib_scale.vec\"\n\nm = Scale(4)\nfor i in 0..5:\n  m = m - 0.05 * grad(m.loss, [3.0, 6.0])\nsave(m, \"tests/cases/data/imp.safetensors\")\nprint(m.s)\n");
+    assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
+    let b = run_vector_src("vector_imp_infer.vec",
+        "import \"vector_lib_scale.vec\"\n\nm = load(\"tests/cases/data/imp.safetensors\")\nprint(m.s)\nprint(m([2.0]))\n");
+    assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+    assert_eq!(String::from_utf8(b.stdout).unwrap(), "3.03125 : f32\n[6.0625] : f32\n");
+}
+
+#[test]
+fn import_resolves_transitively() {
+    write_temp("vector_lib_a.vec", "import \"vector_lib_b.vec\"\n\nfn double_sq(x):\n  sq(x) * 2.0\n");
+    write_temp("vector_lib_b.vec", "fn sq(x):\n  x * x\n");
+    let out = run_vector_src("vector_imp_trans.vec",
+        "import \"vector_lib_a.vec\"\n\nprint(double_sq(3.0))\nprint(sq(4.0))\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "18 : f32\n16 : f32\n");
+}
+
+#[test]
+fn circular_import_fails_loud() {
+    write_temp("vector_lib_c1.vec", "import \"vector_lib_c2.vec\"\n\nfn f(x):\n  x\n");
+    write_temp("vector_lib_c2.vec", "import \"vector_lib_c1.vec\"\n\nfn g(x):\n  x\n");
+    let out = run_vector_src("vector_imp_circ.vec", "import \"vector_lib_c1.vec\"\n\nprint(f(1.0))\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("circular import"), "{}", stderr);
+}
+
+#[test]
+fn import_with_top_level_code_fails_loud() {
+    write_temp("vector_lib_body.vec", "fn f(x):\n  x\n\nprint(f(1.0))\n");
+    let out = run_vector_src("vector_imp_body.vec", "import \"vector_lib_body.vec\"\n\nprint(f(1.0))\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("top-level code"), "{}", stderr);
+}
+
+#[test]
+fn import_name_collision_fails_loud() {
+    write_temp("vector_lib_d1.vec", "fn same(x):\n  x\n");
+    write_temp("vector_lib_d2.vec", "fn same(x):\n  x * 2.0\n");
+    let out = run_vector_src("vector_imp_coll.vec",
+        "import \"vector_lib_d1.vec\"\nimport \"vector_lib_d2.vec\"\n\nprint(same(1.0))\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("more than one imported file"), "{}", stderr);
+}
+
+#[test]
+fn missing_import_fails_loud() {
+    let out = run_vector_src("vector_imp_missing.vec", "import \"vector_nope.vec\"\n\nprint(1.0)\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("cannot read import"), "{}", stderr);
+}
+
 #[test]
 fn wav_load_decodes_reference_files() {
     let out = run_vector_src("vector_wav_load.vec",
@@ -485,6 +550,16 @@ fn repl_saves_and_loads() {
         "x = [1.0, 2.0]\nq = save({v: x * 2.0}, \"tests/cases/data/repl.safetensors\")\np = load(\"tests/cases/data/repl.safetensors\")\np.v\n",
     );
     assert_eq!(stdout, "[2, 4] : f32\n", "stderr: {}", stderr);
+}
+
+#[test]
+fn repl_imports_libraries() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    fs::write("tests/cases/data/repl_lib.vec", "fn triple(x):\n  x * 3.0\n").unwrap();
+    let (stdout, stderr) = run_repl_script(
+        "import \"tests/cases/data/repl_lib.vec\"\ntriple(7.0)\n",
+    );
+    assert_eq!(stdout, "21 : f32\n", "stderr: {}", stderr);
 }
 
 #[test]

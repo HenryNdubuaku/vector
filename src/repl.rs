@@ -102,14 +102,19 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         .collect();
     let mut p = Parser {
         repl: true,
+        library: false,
         toks: lexed.toks,
         cols: lexed.cols,
         lines: lexed.lines,
         pos: 0,
+        imports: Vec::new(),
         fns: HashMap::new(),
         modules: HashMap::new(),
     };
     let prog = p.program();
+    let (import_fns, import_modules) = crate::imports::load_libraries("", &prog.imports);
+    session.fns.extend(import_fns);
+    session.modules.extend(import_modules);
     session.fns.extend(prog.fns);
     session.modules.extend(prog.modules);
 

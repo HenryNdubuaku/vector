@@ -1,4 +1,6 @@
-# Train a 1-8-1 tanh network to approximate sin(x) on [-pi, pi].
+# Train the network from mlp.vec to approximate sin(x) on [-pi, pi].
+
+import "mlp.vec"
 
 n = 64
 batch_size = 16
@@ -10,17 +12,6 @@ inputs = reshape(linspace(-pi, pi, n), n, 1)
 targets = sin(inputs)
 eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
 eval_targets = sin(eval_inputs)
-
-module Mlp(hidden):
-  l1 = Linear(1, hidden)
-  l2 = Linear(hidden, 1)
-
-  forward(self, x):
-    self.l2(tanh(self.l1(x)))
-
-  loss(self, inputs, targets):
-    error = self(inputs) - targets
-    mean(error * error)
 
 model = Mlp(hidden_size)
 

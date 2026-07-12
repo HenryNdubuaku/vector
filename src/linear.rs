@@ -20,10 +20,12 @@ pub fn stdlib_modules() -> HashMap<String, ModuleDecl> {
     let lexed = lex(&src);
     let mut p = Parser {
         repl: false,
+        library: false,
         toks: lexed.toks,
         cols: lexed.cols,
         lines: lexed.lines,
         pos: 0,
+        imports: Vec::new(),
         fns: HashMap::new(),
         modules: HashMap::new(),
     };

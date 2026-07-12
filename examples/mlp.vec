@@ -1,0 +1,12 @@
+# A 1-hidden-layer tanh network, shared by train.vec and inference.vec.
+
+module Mlp(hidden):
+  l1 = Linear(1, hidden)
+  l2 = Linear(hidden, 1)
+
+  forward(self, x):
+    self.l2(tanh(self.l1(x)))
+
+  loss(self, inputs, targets):
+    error = self(inputs) - targets
+    mean(error * error)
