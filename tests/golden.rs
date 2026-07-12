@@ -235,6 +235,40 @@ fn export_writes_standalone_stablehlo() {
 }
 
 #[test]
+fn plot_writes_svg() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let out = run_vector_src("vector_plot.vec",
+        "x = linspace(0.0, 1.0, 5)\nplot(x, x * x, \"quad\")\nscatter(x, x)\ntitle(\"curves\")\nxlabel(\"x\")\nylabel(\"y\")\nsavefig(\"tests/cases/data/fig.svg\")\nprint(sum(x))\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "2.5 : f32\n");
+    let svg = fs::read_to_string("tests/cases/data/fig.svg").unwrap();
+    assert!(svg.starts_with("<svg"), "{}", svg);
+    assert!(svg.contains("<polyline"), "{}", svg);
+    assert!(svg.contains("<circle"), "{}", svg);
+    assert!(svg.contains(">curves</text>"), "{}", svg);
+    assert!(svg.contains(">quad</text>"), "{}", svg);
+    assert!(svg.trim_end().ends_with("</svg>"), "{}", svg);
+}
+
+#[test]
+fn plot_without_savefig_fails_loud() {
+    let out = run_vector_src("vector_plot_unfinished.vec",
+        "x = linspace(0.0, 1.0, 5)\nplot(x, x)\nprint(sum(x))\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("savefig"), "{}", stderr);
+}
+
+#[test]
+fn savefig_without_plot_fails_loud() {
+    let out = run_vector_src("vector_savefig_empty.vec",
+        "savefig(\"tests/cases/data/empty.svg\")\nprint(1.0)\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("without any plot"), "{}", stderr);
+}
+
+#[test]
 fn export_requires_module_instance() {
     let out = run_vector_src("vector_export_tensor.vec",
         "x = [1.0]\nexport(x, \"tests/cases/data/x.mlir\", [1.0])\n");

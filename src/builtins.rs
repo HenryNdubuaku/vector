@@ -298,6 +298,54 @@ impl Tracer {
                 self.plan_save(&v, &path);
                 v
             }
+            "plot" | "scatter" => {
+                let mut exprs: Vec<&Expr> = args.iter().collect();
+                let label = match exprs.last() {
+                    Some(Expr::Str(s)) => {
+                        let s = s.clone();
+                        exprs.pop();
+                        Some(s)
+                    }
+                    _ => None,
+                };
+                if exprs.is_empty() || exprs.len() > 2 {
+                    die(&format!("{} expects (y), (x, y) or (x, y, \"label\")", name));
+                }
+                let data: Vec<TVal> = exprs.iter().map(|a| self.trace(a, env, fns)).collect();
+                self.plot_series(name == "scatter", data, label)
+            }
+            "title" | "xlabel" | "ylabel" => {
+                if args.len() != 1 {
+                    die(&format!("{} expects 1 arg, got {}", name, args.len()));
+                }
+                let s = match &args[0] {
+                    Expr::Str(s) => s.clone(),
+                    _ => die(&format!("{} expects a string literal", name)),
+                };
+                self.figure_text(name, s);
+                let val = self.constant(0.0, Dtype::F32);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
+            "savefig" => {
+                if args.len() != 1 {
+                    die(&format!("savefig expects 1 arg, got {}", args.len()));
+                }
+                let path = match &args[0] {
+                    Expr::Str(s) => s.clone(),
+                    _ => die("savefig expects a file path string literal"),
+                };
+                self.finish_figure(Some(path));
+                let val = self.constant(0.0, Dtype::F32);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
+            "show" => {
+                if !args.is_empty() {
+                    die(&format!("show expects no args, got {}", args.len()));
+                }
+                self.finish_figure(None);
+                let val = self.constant(0.0, Dtype::F32);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
             "export" => {
                 if args.len() < 2 {
                     die("export expects (model, \"path\", example inputs...)");

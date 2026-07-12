@@ -8,6 +8,7 @@ mod lexer;
 mod linear;
 mod npy;
 mod parser;
+mod plot;
 mod repl;
 mod runtime;
 mod safetensors;
@@ -23,6 +24,7 @@ use export::ExportSpec;
 use lexer::lex;
 use npy::InputSpec;
 use parser::Parser;
+use plot::FigureSpec;
 use runtime::{execute, format_tensor};
 use safetensors::SaveSpec;
 use trace::Tracer;
@@ -87,7 +89,7 @@ fn plugin_path() -> String {
     die("no PJRT plugin found; run `vector setup` or set PJRT_PLUGIN_PATH");
 }
 
-fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<SaveSpec>, Vec<ExportSpec>) {
+fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<SaveSpec>, Vec<ExportSpec>, Vec<FigureSpec>) {
     let src = fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
@@ -109,6 +111,8 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
         inputs: Vec::new(),
         saves: Vec::new(),
         exports: Vec::new(),
+        figures: Vec::new(),
+        figure: FigureSpec::default(),
         modules,
         statics: Vec::new(),
         rng: 0x243F6A8885A308D3,
@@ -118,12 +122,21 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
         interned: vec![HashMap::new()],
     };
     tracer.trace(&prog.main, &HashMap::new(), &prog.fns);
+    if !tracer.figure.series.is_empty() {
+        die("plot without savefig or show; finish the figure");
+    }
     let mut outputs: Vec<_> = tracer.prints.iter().map(|(_, v)| v.clone()).collect();
     for spec in &tracer.saves {
         outputs.extend(spec.vals.iter().cloned());
     }
     for spec in &tracer.exports {
         outputs.extend(spec.weight_vals.iter().cloned());
+    }
+    for fig in &tracer.figures {
+        for series in &fig.series {
+            outputs.push(series.x.clone());
+            outputs.push(series.y.clone());
+        }
     }
     let labels: Vec<Option<String>> = tracer.prints.iter().map(|(l, _)| l.clone()).collect();
     let specs: Vec<InputSpec> = tracer.inputs.iter()
@@ -144,11 +157,19 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
         })
         .collect();
     let params: Vec<usize> = tracer.inputs.iter().map(|&(_, id)| id).collect();
-    (build_module(&tracer.nodes, &params, &outputs), specs, labels, tracer.saves, tracer.exports)
+    (build_module(&tracer.nodes, &params, &outputs), specs, labels, tracer.saves, tracer.exports, tracer.figures)
+}
+
+fn open_figure(path: &str) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    Command::new(opener)
+        .arg(path)
+        .spawn()
+        .unwrap_or_else(|e| die(&format!("cannot open plot viewer: {}", e)));
 }
 
 fn run(path: &str) {
-    let (module, specs, labels, saves, exports) = compile(path);
+    let (module, specs, labels, saves, exports, figures) = compile(path);
     let mut results = execute(&module, &specs).into_iter();
     for label in &labels {
         let tensor = results.next().unwrap();
@@ -164,6 +185,13 @@ fn run(path: &str) {
     for spec in &exports {
         let tensors: Vec<_> = spec.weight_vals.iter().map(|_| results.next().unwrap()).collect();
         export::write_export(spec, &tensors);
+    }
+    for (i, fig) in figures.iter().enumerate() {
+        let tensors: Vec<_> = (0..fig.series.len() * 2).map(|_| results.next().unwrap()).collect();
+        let written = plot::write_figure(fig, &tensors, i);
+        if fig.path.is_none() {
+            open_figure(&written);
+        }
     }
 }
 

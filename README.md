@@ -1,4 +1,4 @@
-# vector
+# Vector
 
 Programming language for machine learning, built on top of XLA compiler.
 
@@ -13,13 +13,13 @@ hidden_size = 8
 learning_rate = 0.03
 train_steps = 30000
 
-# vector has numpy-like vectorized functions 
+# vector ships numpy-like vectorized functions 
 inputs = reshape(linspace(-pi, pi, n), n, 1)
 targets = sin(inputs)
 eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
 eval_targets = sin(eval_inputs)
 
-# vector is functional with modules
+# vector is functional like JAX, but with modules
 module Mlp(hidden):
   l1 = Linear(1, hidden)
   l2 = Linear(hidden, 1)
@@ -57,6 +57,12 @@ print(load("predictions.npy") - eval_targets)
 # export the stableHLO: emits stableHLO text
 export(model, "mlp.mlir", eval_inputs)
 
+# vector plots with a matplotlib-like interface, rendered as svg
+plot(inputs, targets, "sin")
+plot(inputs, model(inputs), "mlp")
+title("sin approximation")
+savefig("sin.svg")
+
 ```
 
 ## Install
@@ -78,11 +84,13 @@ vector filename.vec
 `load` reads `.npy` files (little-endian f32/f64, C order); the tensor becomes a runtime input to the compiled program, so shapes stay static. 
 `save(model, "model.safetensors")` writes weights as safetensors with the module structure in the header metadata; `load("model.safetensors")` returns the instance — callable and trainable — as long as its module is defined in the program. PyTorch state_dicts load as plain records (numeric path components like `layers.0` become `layers._0`). Single tensors save to `.npy`. 
 `export(model, "model.mlir", example_inputs...)` writes the forward pass as a standalone StableHLO module with the weights baked in as constants (the examples fix the input shapes) — runnable by anything that speaks StableHLO: JAX, IREE, PJRT plugins. 
+Plotting is matplotlib-style: `plot(x, y, "label")`, `scatter`, `title`/`xlabel`/`ylabel`, then `savefig("fig.svg")` or `show()` (writes a temp file and opens the viewer). Figures render as SVG. 
 Output comes only from `print`. Transforms: `grad`, `vmap` (nestable), `jacobian`. 
 Loops (`for i in 0..n:`) compile to one XLA while op (and unroll under `grad`, so gradients flow through them); `where(cond, a, b)` selects elementwise with comparisons `< > <= >=`.
 
-
 ## TO-DO:
 
-- plot 
+- table (CSV/pandas)
 - neuron (trainium) and metal backends
+- test on GPU
+- test on TPU 

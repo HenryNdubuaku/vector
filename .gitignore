@@ -21,4 +21,5 @@
 *.safetensors
 *.mlir
 *.npy
+*.svg
 tests/cases/data/

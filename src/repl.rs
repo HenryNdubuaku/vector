@@ -119,6 +119,8 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         inputs: Vec::new(),
         saves: Vec::new(),
         exports: Vec::new(),
+        figures: Vec::new(),
+        figure: crate::plot::FigureSpec::default(),
         modules: session.modules.clone(),
         statics: Vec::new(),
         rng: session.rng,
@@ -140,6 +142,9 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
     let mut bound: Vec<String> = Vec::new();
     let mut echo: Option<TVal> = None;
     walk(&mut tracer, &prog.main, &mut env, &session.fns, &mut bound, &mut echo);
+    if !tracer.figure.series.is_empty() {
+        crate::die("plot without savefig or show; finish the figure");
+    }
 
     let mut metas: Vec<Meta> = Vec::new();
     let mut outputs: Vec<Val> = Vec::new();
@@ -159,6 +164,12 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
     }
     for spec in &tracer.exports {
         outputs.extend(spec.weight_vals.iter().cloned());
+    }
+    for fig in &tracer.figures {
+        for series in &fig.series {
+            outputs.push(series.x.clone());
+            outputs.push(series.y.clone());
+        }
     }
 
     let mut results: Vec<Tensor> = Vec::new();
@@ -207,6 +218,13 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
     for spec in &tracer.exports {
         let tensors: Vec<Tensor> = spec.weight_vals.iter().map(|_| results.next().unwrap()).collect();
         crate::export::write_export(spec, &tensors);
+    }
+    for (i, fig) in tracer.figures.iter().enumerate() {
+        let tensors: Vec<Tensor> = (0..fig.series.len() * 2).map(|_| results.next().unwrap()).collect();
+        let written = crate::plot::write_figure(fig, &tensors, i);
+        if fig.path.is_none() {
+            crate::open_figure(&written);
+        }
     }
 
     let mut captured = captured.into_iter();

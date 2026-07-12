@@ -5,6 +5,7 @@ use crate::die;
 use crate::export::ExportSpec;
 use crate::graph::{BVal, Dtype, InputSource, Node, OpKind, TVal, Val};
 use crate::parser::{Decl, Expr, ModuleDecl};
+use crate::plot::FigureSpec;
 use crate::safetensors::SaveSpec;
 
 pub struct Tracer {
@@ -13,6 +14,8 @@ pub struct Tracer {
     pub inputs: Vec<(InputSource, usize)>,
     pub saves: Vec<SaveSpec>,
     pub exports: Vec<ExportSpec>,
+    pub figures: Vec<FigureSpec>,
+    pub figure: FigureSpec,
     pub modules: HashMap<String, ModuleDecl>,
     pub statics: Vec<HashMap<String, f64>>,
     pub rng: u64,

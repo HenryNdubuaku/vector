@@ -43,3 +43,8 @@ save(model(eval_inputs), "predictions.npy")
 print(load("predictions.npy") - eval_targets)
 
 export(model, "mlp.mlir", eval_inputs)
+
+plot(inputs, targets, "sin")
+plot(inputs, model(inputs), "mlp")
+title("sin approximation")
+savefig("sin.svg")
