@@ -12,6 +12,7 @@ mod plot;
 mod repl;
 mod runtime;
 mod safetensors;
+mod table;
 mod trace;
 
 use std::collections::HashMap;
@@ -147,7 +148,7 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<Option<String>>, Vec<Save
                 shape: tracer.nodes[*id].shape.clone(),
                 dtype: tracer.nodes[*id].dtype,
             },
-            graph::InputSource::Safetensors(path, name) => InputSpec {
+            graph::InputSource::Safetensors(path, name) | graph::InputSource::Csv(path, name) => InputSpec {
                 path: path.clone(),
                 entry: Some(name.clone()),
                 shape: tracer.nodes[*id].shape.clone(),

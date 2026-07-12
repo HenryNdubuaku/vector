@@ -83,6 +83,10 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
                 operands.join(", "), dim, in_types.join(", "), out
             )
         }
+        OpKind::Transpose(perm) => format!(
+            "stablehlo.transpose {}, dims = [{}] : ({}) -> {}",
+            arg(0), join(perm), t(0), out
+        ),
         OpKind::Reduce(reducer, axes) => format!(
             "stablehlo.reduce({} init: {}) applies stablehlo.{} across dimensions = [{}] : ({}, {}) -> {}",
             arg(0), arg(1), reducer, join(axes), t(0), t(1), out

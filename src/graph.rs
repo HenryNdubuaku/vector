@@ -35,6 +35,7 @@ pub fn per_shape(v: &BVal) -> Vec<usize> {
 pub enum InputSource {
     Npy(String),
     Safetensors(String, String),
+    Csv(String, String),
     Live(String),
 }
 
@@ -83,6 +84,7 @@ pub enum OpKind {
     Broadcast(Vec<usize>),
     Reshape,
     Reduce(String, Vec<usize>),
+    Transpose(Vec<usize>),
     Dot(Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>),
     Compare(String),
     Select,

@@ -22,4 +22,5 @@
 *.mlir
 *.npy
 *.svg
+*.csv
 tests/cases/data/

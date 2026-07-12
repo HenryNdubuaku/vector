@@ -42,6 +42,10 @@ print(eval_targets)
 save(model(eval_inputs), "predictions.npy")
 print(load("predictions.npy") - eval_targets)
 
+save({x: inputs, sin: targets, mlp: model(inputs)}, "predictions.csv")
+table = load("predictions.csv")
+print(mean(table.mlp - table.sin))
+
 export(model, "mlp.mlir", eval_inputs)
 
 plot(inputs, targets, "sin")

@@ -235,6 +235,47 @@ fn export_writes_standalone_stablehlo() {
 }
 
 #[test]
+fn csv_loads_columns_and_factorizes() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    fs::write("tests/cases/data/mini.csv",
+        "sepal length,species,note\n5.1,setosa,\"a, b\"\n4.9,versicolor,c\n4.7,setosa,c\n").unwrap();
+    let out = run_vector_src("vector_csv_load.vec",
+        "t = load(\"tests/cases/data/mini.csv\")\nprint(t.sepal_length)\nprint(t.species)\nprint(t.note)\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "[5.1, 4.9, 4.7] : f32\n[0, 1, 0] : f32\n[0, 1, 1] : f32\n"
+    );
+}
+
+#[test]
+fn csv_save_and_load_roundtrip() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let a = run_vector_src("vector_csv_a.vec",
+        "save({a: [1.0, 2.0], b: [3.5, 4.5]}, \"tests/cases/data/out.csv\")\nprint(1.0)\n");
+    assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
+    assert_eq!(fs::read_to_string("tests/cases/data/out.csv").unwrap(), "a,b\n1,3.5\n2,4.5\n");
+    let b = run_vector_src("vector_csv_b.vec",
+        "t = load(\"tests/cases/data/out.csv\")\nprint(t.b)\nprint(transpose([t.a, t.b]))\n");
+    assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+    assert_eq!(
+        String::from_utf8(b.stdout).unwrap(),
+        "[3.5, 4.5] : f32\n[[1, 3.5], [2, 4.5]] : f32\n"
+    );
+}
+
+#[test]
+fn csv_empty_cell_fails_loud() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    fs::write("tests/cases/data/holes.csv", "a,b\n1,\n2,3\n").unwrap();
+    let out = run_vector_src("vector_csv_holes.vec",
+        "t = load(\"tests/cases/data/holes.csv\")\nprint(t.a)\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stderr.contains("row 2, column b is empty"), "{}", stderr);
+}
+
+#[test]
 fn plot_writes_svg() {
     fs::create_dir_all("tests/cases/data").unwrap();
     let out = run_vector_src("vector_plot.vec",

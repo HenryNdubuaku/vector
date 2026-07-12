@@ -111,6 +111,14 @@ impl Tracer {
                 vec![(ins[0].id, da)]
             }
             OpKind::Reshape => vec![(ins[0].id, self.reshape(g, ins[0].shape.clone()))],
+            OpKind::Transpose(perm) => {
+                let mut inv = vec![0; perm.len()];
+                for (i, &p) in perm.iter().enumerate() {
+                    inv[p] = i;
+                }
+                let da = self.emit(OpKind::Transpose(inv), vec![g.id], ins[0].shape.clone(), g.dtype);
+                vec![(ins[0].id, da)]
+            }
             OpKind::Barrier => vec![(ins[0].id, g.clone())],
             OpKind::Concat(dim) => {
                 let mut contribs = Vec::new();

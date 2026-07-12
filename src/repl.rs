@@ -184,7 +184,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
                     shape: tracer.nodes[*id].shape.clone(),
                     dtype: tracer.nodes[*id].dtype,
                 }),
-                InputSource::Safetensors(path, name) => input_host_buffer(&InputSpec {
+                InputSource::Safetensors(path, name) | InputSource::Csv(path, name) => input_host_buffer(&InputSpec {
                     path: path.clone(),
                     entry: Some(name.clone()),
                     shape: tracer.nodes[*id].shape.clone(),

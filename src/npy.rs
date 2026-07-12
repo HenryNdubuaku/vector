@@ -82,6 +82,9 @@ pub fn host_buffer(dtype: Dtype, shape: &[usize], data: &[u8]) -> HostBuffer {
 
 pub fn input_host_buffer(spec: &InputSpec) -> HostBuffer {
     if let Some(name) = &spec.entry {
+        if spec.path.ends_with(".csv") {
+            return crate::table::csv_host_buffer(&spec.path, name, &spec.shape);
+        }
         return crate::safetensors::tensor_host_buffer(&spec.path, name, &spec.shape, spec.dtype);
     }
     let (shape, dtype, offset) = npy_meta(&spec.path);

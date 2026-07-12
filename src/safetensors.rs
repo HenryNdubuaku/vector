@@ -315,6 +315,10 @@ pub fn write_save(spec: &SaveSpec, tensors: &[Tensor]) {
         crate::npy::write_npy(&spec.path, &tensors[0]);
         return;
     }
+    if spec.path.ends_with(".csv") {
+        crate::table::write_csv(spec, tensors);
+        return;
+    }
     let mut parts: Vec<String> = Vec::new();
     if !spec.metadata.is_empty() {
         let kv: Vec<String> = spec.metadata.iter()
@@ -468,8 +472,10 @@ impl Tracer {
                 TVal::Tensor(_) => die("save to .safetensors expects a record or module instance; tensors save to .npy"),
                 TVal::Record(..) => collect_save(v, "", &mut spec, path),
             }
+        } else if path.ends_with(".csv") {
+            spec = crate::table::csv_save_spec(self, v, path);
         } else {
-            die("save expects a path ending in .npy or .safetensors");
+            die("save expects a path ending in .npy, .safetensors or .csv");
         }
         self.saves.push(spec);
     }

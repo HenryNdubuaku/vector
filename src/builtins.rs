@@ -373,6 +373,9 @@ impl Tracer {
                 if path.ends_with(".safetensors") {
                     return self.load_safetensors(&path);
                 }
+                if path.ends_with(".csv") {
+                    return self.load_csv(&path);
+                }
                 if let Some(&(_, id)) = self.inputs.iter()
                     .find(|(src, _)| matches!(src, InputSource::Npy(p) if *p == path)) {
                     return TVal::Tensor(BVal { val: self.val(id), bdims: 0 });
@@ -381,6 +384,25 @@ impl Tracer {
                 let val = self.emit(OpKind::Input, vec![], shape, dtype);
                 self.inputs.push((InputSource::Npy(path), val.id));
                 TVal::Tensor(BVal { val, bdims: 0 })
+            }
+            "transpose" => {
+                if args.len() != 1 {
+                    die(&format!("transpose expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns).tensor("transpose");
+                let per = per_shape(&v);
+                if per.len() != 2 {
+                    die(&format!("transpose expects rank 2, got shape {:?}", per));
+                }
+                let k = v.bdims;
+                let mut perm: Vec<usize> = (0..k).collect();
+                perm.push(k + 1);
+                perm.push(k);
+                let mut shape: Vec<usize> = v.val.shape[..k].to_vec();
+                shape.push(per[1]);
+                shape.push(per[0]);
+                let val = self.emit(OpKind::Transpose(perm), vec![v.val.id], shape, v.val.dtype);
+                TVal::Tensor(BVal { val, bdims: k })
             }
             "matmul" => {
                 if args.len() != 2 {
