@@ -27,10 +27,11 @@ struct Session {
 }
 
 pub fn run_repl() {
+    let (fns, modules) = linear::stdlib();
     let mut session = Session {
         engine: Engine::new(),
-        fns: HashMap::new(),
-        modules: linear::stdlib_modules(),
+        fns,
+        modules,
         env: HashMap::new(),
         rng: 0x243F6A8885A308D3,
     };

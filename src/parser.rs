@@ -298,6 +298,8 @@ impl Parser {
             Some(Tok::Gt) => "GT",
             Some(Tok::Le) => "LE",
             Some(Tok::Ge) => "GE",
+            Some(Tok::EqEq) => "EQ",
+            Some(Tok::NotEq) => "NE",
             _ => return lhs,
         };
         self.bump();

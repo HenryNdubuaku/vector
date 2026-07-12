@@ -434,6 +434,38 @@ impl Tracer {
                 self.plan_play(&v);
                 v
             }
+            "sort" | "argsort" | "argmax" | "argmin" | "cumsum" => {
+                if args.len() != 1 {
+                    die(&format!("{} expects 1 arg, got {}", name, args.len()));
+                }
+                let v = self.trace(&args[0], env, fns).tensor(name);
+                if v.val.dtype == Dtype::I1 {
+                    die(&format!("cannot {} booleans", name));
+                }
+                match name {
+                    "sort" => self.sort_val(v),
+                    "argsort" => self.argsort_val(v),
+                    "argmax" => self.arg_extreme(v, true),
+                    "argmin" => self.arg_extreme(v, false),
+                    _ => self.cumsum_val(v),
+                }
+            }
+            "one_hot" => {
+                if args.len() != 2 {
+                    die(&format!("one_hot expects (indices, depth), got {} args", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns).tensor("one_hot");
+                let n = self.int_lit(&args[1], env, "one_hot depth");
+                self.one_hot_val(v, n)
+            }
+            "take" => {
+                if args.len() != 2 {
+                    die(&format!("take expects (values, indices), got {} args", args.len()));
+                }
+                let x = self.trace(&args[0], env, fns).tensor("take");
+                let idx = self.trace(&args[1], env, fns).tensor("take indices");
+                self.take_val(x, idx)
+            }
             "transpose" => {
                 if args.len() != 1 {
                     die(&format!("transpose expects 1 arg, got {}", args.len()));

@@ -90,6 +90,7 @@ pub enum OpKind {
     Dot(Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>),
     Compare(String),
     Select,
+    Sort { axis: usize, num: usize },
     Concat(usize),
     Slice(usize, usize, usize),
     DynSlice(Vec<usize>),

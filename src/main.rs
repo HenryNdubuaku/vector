@@ -1,3 +1,4 @@
+mod algos;
 mod audio;
 mod batch;
 mod builtins;
@@ -112,14 +113,15 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<PrintSpec>, Vec<SaveSpec>
         modules: HashMap::new(),
     };
     let prog = p.program();
-    let (mut fns, import_modules) = imports::load_libraries(path, &prog.imports);
+    let (import_fns, import_modules) = imports::load_libraries(path, &prog.imports);
     for name in prog.fns.keys().chain(prog.modules.keys()) {
-        if fns.contains_key(name) || import_modules.contains_key(name) {
+        if import_fns.contains_key(name) || import_modules.contains_key(name) {
             die(&format!("{} is defined in both an import and {}", name, path));
         }
     }
+    let (mut fns, mut modules) = linear::stdlib();
+    fns.extend(import_fns);
     fns.extend(prog.fns);
-    let mut modules = linear::stdlib_modules();
     modules.extend(import_modules);
     modules.extend(prog.modules);
     let mut tracer = Tracer {

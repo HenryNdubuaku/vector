@@ -39,7 +39,8 @@ fn val_name(id: usize, nodes: &[Node]) -> String {
             let w = nodes[id].inputs[0];
             let count = match &nodes[w].kind {
                 OpKind::While { iter_args, .. } => iter_args.len(),
-                _ => unreachable!("Proj of a non-while node"),
+                OpKind::Sort { num, .. } => *num,
+                _ => unreachable!("Proj of a single-result node"),
             };
             if count == 1 { format!("%{}", w) } else { format!("%{}#{}", w, k) }
         }
@@ -57,6 +58,7 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
         OpKind::Proj(_) => unreachable!("projections are name aliases"),
         OpKind::Barrier => unreachable!("barriers are name aliases"),
         OpKind::While { .. } => unreachable!("while is emitted by the region writer"),
+        OpKind::Sort { .. } => unreachable!("sort is emitted by the region writer"),
         OpKind::Iota => format!("stablehlo.iota dim = 0 : {}", out),
         OpKind::Constant(n) => {
             let lit = match node.dtype {
@@ -167,11 +169,42 @@ fn write_while(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
     s.push_str(&format!("{} }}\n", ind));
 }
 
+fn write_sort(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
+    let OpKind::Sort { axis, num } = &nodes[id].kind else {
+        unreachable!()
+    };
+    let ind = " ".repeat(indent);
+    let node = &nodes[id];
+    let args: Vec<String> = node.inputs.iter().map(|&i| val_name(i, nodes)).collect();
+    let types: Vec<String> = node.inputs.iter()
+        .map(|&i| tensor_type(&nodes[i].shape, nodes[i].dtype))
+        .collect();
+    let head = if *num == 1 { format!("%{}", id) } else { format!("%{}:{}", id, num) };
+    let scalars: Vec<String> = node.inputs.iter()
+        .map(|&i| tensor_type(&[], nodes[i].dtype))
+        .collect();
+    let params: Vec<String> = (0..num * 2)
+        .map(|k| format!("%s{}_{}: {}", id, k, scalars[k / 2]))
+        .collect();
+    s.push_str(&format!("{}{} = \"stablehlo.sort\"({}) ({{\n", ind, head, args.join(", ")));
+    s.push_str(&format!("{}^bb0({}):\n", ind, params.join(", ")));
+    s.push_str(&format!(
+        "{}  %c{} = stablehlo.compare LT, %s{}_0, %s{}_1 : ({}, {}) -> tensor<i1>\n",
+        ind, id, id, id, scalars[0], scalars[0]
+    ));
+    s.push_str(&format!("{}  stablehlo.return %c{} : tensor<i1>\n", ind, id));
+    s.push_str(&format!(
+        "{}}}) {{dimension = {} : i64, is_stable = true}} : ({}) -> ({})\n",
+        ind, axis, types.join(", "), types.join(", ")
+    ));
+}
+
 fn write_region(s: &mut String, ids: &[usize], nodes: &[Node], indent: usize) {
     for &id in ids {
         match &nodes[id].kind {
             OpKind::Input | OpKind::IterArg | OpKind::Proj(_) | OpKind::Barrier => {}
             OpKind::While { .. } => write_while(s, id, nodes, indent),
+            OpKind::Sort { .. } => write_sort(s, id, nodes, indent),
             _ => {
                 s.push_str(&" ".repeat(indent));
                 s.push_str(&format!("%{} = {}\n", id, node_text(&nodes[id], nodes)));

@@ -13,9 +13,33 @@ module Linear(in_size, out_size):
 
   forward(self, x):
     matmul(x, self.w) + self.b
+
+fn relu(x):
+  maximum(x, 0.0)
+
+fn sigmoid(x):
+  1.0 / (1.0 + exp(-x))
+
+fn logsumexp(x):
+  m = max(x)
+  m + log(sum(exp(x - m)))
+
+fn softmax(x):
+  e = exp(x - max(x))
+  e / sum(e)
+
+fn var(x):
+  d = x - mean(x)
+  mean(d * d)
+
+fn std(x):
+  sqrt(var(x))
+
+fn norm(x):
+  sqrt(sum(x * x))
 ";
 
-pub fn stdlib_modules() -> HashMap<String, ModuleDecl> {
+pub fn stdlib() -> (HashMap<String, crate::parser::Decl>, HashMap<String, ModuleDecl>) {
     let src = format!("{}\n0.0\n", SOURCE);
     let lexed = lex(&src);
     let mut p = Parser {
@@ -29,7 +53,8 @@ pub fn stdlib_modules() -> HashMap<String, ModuleDecl> {
         fns: HashMap::new(),
         modules: HashMap::new(),
     };
-    p.program().modules
+    let prog = p.program();
+    (prog.fns, prog.modules)
 }
 
 impl Tracer {

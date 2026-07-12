@@ -1,0 +1,38 @@
+x = [3.0, 1.0, 2.0]
+print(sort(x))
+print(argsort(x))
+print(argmax(x))
+print(argmin(x))
+print(one_hot(1.0, 3))
+print(one_hot([2.0, 0.0], 3))
+print(take([10.0, 20.0, 30.0], [2.0, 0.0]))
+print(cumsum([1.0, 2.0, 3.0]))
+print(softmax([0.0, 0.0]))
+print(relu([-1.0, 2.0]))
+print(sigmoid(0.0))
+print(std([1.0, 3.0]))
+print(norm([3.0, 4.0]))
+print(logsumexp([0.0, 0.0]))
+print(where([1.0, 2.0] == [1.0, 3.0], 1.0, 0.0))
+print(where([1.0, 2.0] != [1.0, 3.0], 1.0, 0.0))
+
+m = [[3.0, 1.0], [0.0, 5.0]]
+fn am(r):
+  argmax(r)
+
+print(vmap(am, m))
+
+fn srt(r):
+  sort(r)
+
+print(vmap(srt, m))
+
+fn f(v):
+  sum(cumsum(v))
+
+print(grad(f, [1.0, 2.0, 3.0]))
+
+fn g(v):
+  sum(take(v, [2.0, 2.0]))
+
+print(grad(g, [1.0, 2.0, 3.0]))

@@ -43,7 +43,7 @@ pub struct Tracer {
 
 impl Tracer {
     pub fn emit(&mut self, kind: OpKind, inputs: Vec<usize>, shape: Vec<usize>, dtype: Dtype) -> Val {
-        let internable = !matches!(kind, OpKind::Input | OpKind::IterArg | OpKind::Proj(_) | OpKind::Barrier | OpKind::While { .. });
+        let internable = !matches!(kind, OpKind::Input | OpKind::IterArg | OpKind::Proj(_) | OpKind::Barrier | OpKind::While { .. } | OpKind::Sort { .. });
         if internable {
             let key = format!("{:?}|{:?}|{:?}|{:?}", kind, inputs, shape, dtype);
             for frame in self.interned.iter().rev() {

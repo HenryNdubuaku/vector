@@ -36,6 +36,7 @@ impl Tracer {
             OpKind::While { .. } | OpKind::Proj(_) => {
                 die("differentiating across a for loop isn't supported; take gradients inside the loop body")
             }
+            OpKind::Sort { .. } => die("differentiating through sort isn't supported yet"),
             OpKind::DynSlice(_) => {
                 let zeros = self.zeros_like(&ins[0]);
                 let mut inputs = vec![zeros.id, g.id];

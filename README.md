@@ -116,8 +116,6 @@ The server compiles the model once through XLA and answers with `{"outputs": [..
 
 ## Roadmap
 
-- common data structures
-- common algorithms 
 - neuron (trainium) and metal backends
 - test on GPU
 - test on TPU 

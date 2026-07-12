@@ -12,6 +12,8 @@ pub enum Tok {
     In,
     DotDot,
     Eq,
+    EqEq,
+    NotEq,
     Lt,
     Gt,
     Le,
@@ -75,7 +77,24 @@ pub fn lex(src: &str) -> Lexed {
             '}' => { i += 1; col += 1; push(Tok::RBrace, tl, tc, &mut toks, &mut lines, &mut cols); }
             ',' => { i += 1; col += 1; push(Tok::Comma, tl, tc, &mut toks, &mut lines, &mut cols); }
             ':' => { i += 1; col += 1; push(Tok::Colon, tl, tc, &mut toks, &mut lines, &mut cols); }
-            '=' => { i += 1; col += 1; push(Tok::Eq, tl, tc, &mut toks, &mut lines, &mut cols); }
+            '=' => {
+                i += 1; col += 1;
+                if chars.get(i) == Some(&'=') {
+                    i += 1; col += 1;
+                    push(Tok::EqEq, tl, tc, &mut toks, &mut lines, &mut cols);
+                } else {
+                    push(Tok::Eq, tl, tc, &mut toks, &mut lines, &mut cols);
+                }
+            }
+            '!' => {
+                i += 1; col += 1;
+                if chars.get(i) == Some(&'=') {
+                    i += 1; col += 1;
+                    push(Tok::NotEq, tl, tc, &mut toks, &mut lines, &mut cols);
+                } else {
+                    die("unexpected character: ! (use != for inequality)");
+                }
+            }
             '<' => {
                 i += 1; col += 1;
                 if chars.get(i) == Some(&'=') {
