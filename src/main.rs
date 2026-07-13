@@ -344,13 +344,24 @@ fn detect_backends() -> Vec<&'static str> {
             } else if fs::metadata("/dev/kfd").is_ok() {
                 backends.push("rocm");
             }
-            if fs::metadata("/dev/accel0").is_ok() {
+            if fs::metadata("/dev/accel0").is_ok() || google_pci_device() {
                 backends.push("tpu");
             }
         }
         _ => {}
     }
     backends
+}
+
+fn google_pci_device() -> bool {
+    let Ok(entries) = fs::read_dir("/sys/bus/pci/devices") else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        fs::read_to_string(e.path().join("vendor"))
+            .map(|v| v.trim() == "0x1ae0")
+            .unwrap_or(false)
+    })
 }
 
 fn setup_auto() {
