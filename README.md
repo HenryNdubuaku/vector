@@ -179,6 +179,8 @@ curl -d '{"inputs": [[[-3.14], [-2.36], [-1.57], [-0.79], [0.0], [0.79], [1.57],
 ```
 The server compiles the model once through XLA; wrong shapes get a loud `{"error": ...}`.
 
+**5. Read more**: [docs/reference.md](docs/reference.md) covers the whole language; [docs/examples.md](docs/examples.md) shows every feature as a runnable program with its verified output — generated from the test suite, so it can never go stale.
+
 ## Roadmap
 
 | When           | Focus                          | Goal                                        |
@@ -187,8 +189,8 @@ The server compiles the model once through XLA; wrong shapes get a loud `{"error
 | August 2026    | Vector notebooks               | Integrate into academic curriculums         |
 | September 2026 | Large-scale distributed ML     | Integrate into enterprises                  |
 | October 2026   | Vector libraries               | Ecosystem partnerships                      |
-| November 2026  | Self-hosting                   | Workshops & developer events                |
-| December 2026  | **Release v1**                 |                                             |
+| November 2026  | **Release v1**                 | Workshops & developer events                |
+| December 2026  | Self-host & broaden            |                                             |
 
 ## Contributing
 
