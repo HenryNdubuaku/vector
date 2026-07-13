@@ -126,29 +126,19 @@ export(model, "mlp.mlir", eval_inputs)
 
 ## Get Started
 
-**1. Requirements**: any machine with a CPU, GPU or TPU, plus:
-- [Rust](https://www.rust-lang.org/tools/install) (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh && . "$HOME/.cargo/env"`)
-- libclang and [protoc](https://protobuf.dev/installation/) ≥ 3.15 — on macOS just `brew install protobuf`; on Ubuntu apt's protoc is too old, so:
+**1. Install** on any machine with a CPU, GPU or TPU — the script installs the toolchain, builds vector, and sets up the right backends for the hardware it finds:
 ```sh
-apt update && apt install -y libclang-dev unzip
-curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-x86_64.zip
-unzip -o protoc-25.3-linux-x86_64.zip -d /usr/local bin/protoc 'include/*'
+curl -fsSL https://raw.githubusercontent.com/HenryNdubuaku/vector/main/install.sh | sh
+. "$HOME/.cargo/env"
 ```
-
-**2. Build from source**:`vector setup` detects the machine and installs the right backends:
+On NVIDIA machines the cuda backend also needs the CUDA 13 runtime, cuDNN 9 and nvcc — `vector setup` warns and names anything missing. On a bare container:
 ```sh
-git clone https://github.com/HenryNdubuaku/vector.git 
-cd vector 
-cargo install --path . && vector setup 
-```
-On NVIDIA machines the cuda backend needs the CUDA 13 runtime, cuDNN 9 and nvcc,`vector setup` warns and names anything missing. On a bare container:
-```sh
-apt install -y cuda-libraries-13-1 cuda-cupti-13-1 libcudnn9-cuda-13 cuda-nvcc-13-1
+sudo apt install -y cuda-libraries-13-1 cuda-cupti-13-1 libcudnn9-cuda-13 cuda-nvcc-13-1
 export LD_LIBRARY_PATH=/usr/local/cuda-13.1/lib64:/usr/local/cuda-13.1/extras/CUPTI/lib64
 export XLA_FLAGS=--xla_gpu_cuda_data_dir=/usr/local/cuda-13.1
 ```
 
-**3. Run the tour**: paste the overview cells into `sin.vec`:
+**2. Run the tour**: paste the overview cells into `sin.vec`:
 ```sh
 vector examples/train.vec
 ```
@@ -166,7 +156,7 @@ Programs run on the CPU by default; add `--accelerate` to run on the machine's G
 vector examples/train.vec --accelerate
 ```
 
-**4. Serve the exported model** over http and query it:
+**3. Serve the exported model** over http and query it:
 ```sh
 vector serve mlp.mlir 8080
 ```
@@ -179,7 +169,7 @@ curl -d '{"inputs": [[[-3.14], [-2.36], [-1.57], [-0.79], [0.0], [0.79], [1.57],
 ```
 The server compiles the model once through XLA; wrong shapes get a loud `{"error": ...}`.
 
-**5. Read more**: [docs/reference.md](docs/reference.md) covers the whole language; [docs/examples.md](docs/examples.md) shows every feature as a runnable program with its verified output — generated from the test suite, so it can never go stale.
+**4. Read more**: [docs/reference.md](docs/reference.md) covers the whole language; [docs/examples.md](docs/examples.md) shows every feature as a runnable program with its verified output — generated from the test suite, so it can never go stale.
 
 ## Roadmap
 
