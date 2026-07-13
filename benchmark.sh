@@ -5,15 +5,22 @@ STEPS="${BENCH_STEPS:-200}"
 export BENCH_STEPS="$STEPS"
 
 echo "machine: $(uname -ms), $STEPS training steps of a 1-1024-1024-1 tanh net on 2048 points"
-echo "all frameworks use identical weights, so losses should match"
+echo "versions: $(vector version 2>/dev/null || echo 'vector missing'), $(python3 -c 'import sys; print("python", sys.version.split()[0])' 2>/dev/null)"
+python3 -c 'import jax; print("jax", jax.__version__)' 2>/dev/null
+python3 -c 'import torch; print("torch", torch.__version__)' 2>/dev/null
+command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null | head -1
+echo "timings are the median of 5 runs after one warm-up; identical weights everywhere, so losses must match"
 echo
 
+OUT="$(mktemp)"
+trap 'rm -f "$OUT"' EXIT
+
 echo "== vector =="
-vector test "$STEPS" || echo "vector failed"
+vector benchmark "$STEPS" | tee -a "$OUT" || echo "vector failed"
 echo
 
 echo "== python/jax =="
-python3 - <<'EOF' 2>/dev/null || echo "jax not installed (pip install jax); skipped"
+python3 - <<'EOF' 2>/dev/null | tee -a "$OUT" || echo "jax not installed (pip install jax); skipped"
 import os, time, warnings
 warnings.filterwarnings("ignore")
 import jax, jax.numpy as jnp
@@ -54,21 +61,24 @@ try:
 except RuntimeError:
     pass
 
+import statistics
 for name, dev in devices.items():
     with jax.default_device(dev):
         p = init()
         before = float(loss(p))
-        jax.block_until_ready(train(p))
-        p = init()
-        t0 = time.perf_counter()
         trained = jax.block_until_ready(train(p))
-        dt = time.perf_counter() - t0
-        print(f"{name}: ok — loss {before:.4f} -> {float(loss(trained)):.4f} (trained in {dt:.2f}s)")
+        times = []
+        for _ in range(5):
+            p = init()
+            t0 = time.perf_counter()
+            trained = jax.block_until_ready(train(p))
+            times.append(time.perf_counter() - t0)
+        print(f"{name}: ok — loss {before:.4f} -> {float(loss(trained)):.4f} (trained in {statistics.median(times):.2f}s median of 5)")
 EOF
 echo
 
 echo "== python/pytorch =="
-python3 - <<'EOF' 2>/dev/null || echo "pytorch not installed (pip install torch); skipped"
+python3 - <<'EOF' 2>/dev/null | tee -a "$OUT" || echo "pytorch not installed (pip install torch); skipped"
 import os, time, math
 import torch
 
@@ -112,19 +122,41 @@ def train(p, x, t):
             p = {k: (v - lr * g).detach() for (k, v), g in zip(p.items(), gs)}
     return p
 
+def train_compiled(p, x, t):
+    gfn = torch.func.grad(lambda p: loss(p, x, t))
+    step = torch.compile(lambda p: {k: v - lr * g for (k, v), g in zip(p.items(), gfn(p).values())})
+    for _ in range(steps):
+        p = step(p)
+    return p
+
 for device in devices:
     x = torch.linspace(-math.pi, math.pi, n, device=device).reshape(n, 1)
     t = torch.sin(x)
-    p = init(device)
     with torch.no_grad():
-        before = float(loss(p, x, t))
-    train(init(device), x, t)
-    sync(device)
-    t0 = time.perf_counter()
-    trained = train(init(device), x, t)
-    sync(device)
-    dt = time.perf_counter() - t0
-    with torch.no_grad():
-        after = float(loss(trained, x, t))
-    print(f"{device}: ok — loss {before:.4f} -> {after:.4f} (trained in {dt:.2f}s)")
+        before = float(loss(init(device), x, t))
+    import statistics
+    for name, impl in [("eager", train), ("compiled", train_compiled)]:
+        try:
+            impl(init(device), x, t)
+            sync(device)
+            times = []
+            for _ in range(5):
+                t0 = time.perf_counter()
+                trained = impl(init(device), x, t)
+                sync(device)
+                times.append(time.perf_counter() - t0)
+            with torch.no_grad():
+                after = float(loss(trained, x, t))
+            print(f"{device} ({name}): ok — loss {before:.4f} -> {after:.4f} (trained in {statistics.median(times):.2f}s median of 5)")
+        except Exception as e:
+            print(f"{device} ({name}): skipped ({type(e).__name__})")
 EOF
+echo
+
+losses=$(grep -o 'loss [0-9.]* -> [0-9.]*' "$OUT" | sort -u | wc -l | tr -d ' ')
+if [ "$losses" = "1" ]; then
+    echo "correctness: all frameworks computed the same losses"
+else
+    echo "WARNING: losses differ across frameworks; the comparison is not valid"
+    grep -o 'loss [0-9.]* -> [0-9.]*' "$OUT" | sort -u
+fi

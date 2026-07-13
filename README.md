@@ -159,13 +159,17 @@ vector filename.vec --accelerate
 ## Benchmarks
 
 - 200 full-batch gradient-descent steps of a 1→1024→1024→1 tanh network on 2048 points of sin(x), f32. 
-- Every framework starts from identical weights and converges to the same loss (0.3586 → 0.0133), so the comparison is correctness-checked. 
-- JAX runs a jitted `fori_loop`; PyTorch runs its standard eager loop; timings exclude compilation, after one warm-up run. Reproduce with `sh benchmark.sh`.
+- Full-batch steps minimize Python dispatch overhead, which is generous to eager PyTorch. 
+- Every framework starts from identical weights; the script verifies all frameworks compute the same losses (0.3586 → 0.0133) and prints the verdict. 
+- JAX runs a jitted `fori_loop`; PyTorch runs both its standard eager loop and a `torch.compile`d step. 
+- Timings are the median of 5 runs after one warm-up, excluding compilation; the script prints all framework versions and GPU info. 
 
-| Device                | Vector    | Python/JAX | Python/PyTorch |
-| --------------------- | --------- | ---------- | -------------- |
-| M5 Max CPU            | **1.56s** | 1.63s      | 2.11s          |
-| M5 Max GPU (Metal)    | **0.27s** | —          | 0.32s          |
+| Device                    | Vector    | Python/JAX | PyTorch (eager) | PyTorch (compiled) |
+| ------------------------- | --------- | ---------- | --------------- | ------------------ |
+| Apple M5 Max CPU          | **1.51s** | 1.62s      | 2.11s           | 2.15s              |
+| Apple M5 Max GPU (Metal)  | **0.27s** | —          | 0.32s           | 0.30s              |
+| GPU-box CPU (x86)         | **7.61s** | —          | 14.19s          | —                  |
+| NVIDIA RTX 4000 Ada       | **0.09s** | —          | 0.29s           | —                  |
 
 ## Roadmap
 

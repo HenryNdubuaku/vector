@@ -43,6 +43,7 @@ const USAGE: &str = "usage: vector [file.vec]
   vector serve <m.mlir> [port]  serve an exported model over http (default port 8080)
   vector setup                  detect this machine and install the right backends
   vector test [steps]           train a small model on the cpu and the accelerator to check the install
+  vector benchmark [steps]      the same run, benchmark-sized (200 steps), with the config printed
   vector version                print version
 
   --accelerate                  run on the machine's accelerator (gpu/tpu); programs run on the cpu by default
@@ -281,9 +282,15 @@ fn self_test(steps: usize) {
             let executable = engine.prepare(&module);
             let compiled = start.elapsed();
             let results = engine.run(&executable, Vec::new());
-            let start = std::time::Instant::now();
-            engine.run(&executable, Vec::new());
-            let ran = start.elapsed().as_secs_f64();
+            let mut times: Vec<f64> = (0..5)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    engine.run(&executable, Vec::new());
+                    start.elapsed().as_secs_f64()
+                })
+                .collect();
+            times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let ran = times[2];
             let before = results[0].f64_vec()[0];
             let after = results[1].f64_vec()[0];
             if !after.is_finite() || after >= before {
@@ -312,7 +319,7 @@ fn self_test(steps: usize) {
             format!(", {:.1}x the cpu", cpu_seconds / ran)
         };
         println!(
-            "{}: ok — loss {:.4} -> {:.4} (compiled in {:.2}s, trained in {:.2}s{})",
+            "{}: ok — loss {:.4} -> {:.4} (compiled in {:.2}s, trained in {:.2}s median of 5{})",
             backend, before, after, compiled, ran, speedup
         );
     }
@@ -534,6 +541,15 @@ fn main() {
             Some("test") if args.len() == 3 => {
                 let steps = args[2].parse()
                     .unwrap_or_else(|_| die(&format!("steps must be a number, got {}", args[2])));
+                self_test(steps)
+            }
+            Some("benchmark") if args.len() == 2 || args.len() == 3 => {
+                let steps = match args.get(2) {
+                    Some(s) => s.parse()
+                        .unwrap_or_else(|_| die(&format!("steps must be a number, got {}", s))),
+                    None => 200,
+                };
+                println!("{} full-batch steps of a 1-1024-1024-1 tanh net on 2048 points of sin(x), f32", steps);
                 self_test(steps)
             }
             Some("serve") if args.len() == 3 => serve::serve(&args[2], 8080),
