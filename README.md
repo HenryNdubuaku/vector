@@ -1,6 +1,13 @@
 # Vector
 
-A programming language for machine learning, compiled to CPUs, GPUs and TPUs through XLA. 
+A programming language for machine learning, compiled to CPUs, GPUs and TPUs through [XLA](https://openxla.org/xla).
+
+Why Vector exists:
+
+- **Python** runs on an interpreter and hands fragments to compiled libraries, JAX and PyTorch trace pieces of your program, and their rules (pure functions, no mutation, static shapes) fight the language around them. In Vector the whole program is the computation graph: no interpreter, no two-language split, and `grad`, `vmap` and modules are language features rather than libraries.
+- **Dex** proved elegant differentiable array programming as a research project on top of XLA; Vector aims to be the product version, tables, plots, images, audio, checkpoints and serving in a single binary that speaks the ecosystem's formats (safetensors, numpy, StableHLO).
+- **Bend** parallelizes arbitrary recursion on a novel GPU runtime; Vector deliberately compiles to XLA, the compiler that already runs the world's ML, so every program inherits a decade of tensor optimization and every backend XLA supports.
+- **Mojo** is a Python superset for systems programming, carrying all of Python's surface area; Vector is small on purpose, a functional core purpose-built for training and inference, learnable in an afternoon.
 
 ## Overview
 
@@ -111,7 +118,7 @@ tone = sin(linspace(0.0, 1382.3, 4000))
 save({samples: tone * 0.5, rate: 8000.0}, "tone.wav")
 ```
 
-One line exports the trained forward pass as StableHLO — the portable graph format that JAX, IREE and every XLA runtime consume. `vector serve` (below) answers http requests with it:
+One line exports the trained forward pass as [StableHLO](https://openxla.org/stablehlo) — the portable graph format that JAX, IREE and every XLA runtime consume. `vector serve` (below) answers http requests with it:
 
 ```python
 export(model, "mlp.mlir", eval_inputs)
@@ -120,8 +127,13 @@ export(model, "mlp.mlir", eval_inputs)
 ## Get Started
 
 **1. Requirements**: any machine with a CPU, GPU or TPU, plus:
-- [Rust](https://www.rust-lang.org/tools/install)(`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
-- [protoc](https://protobuf.dev/installation/) (`brew install protobuf` / `apt install protobuf-compiler`)
+- [Rust](https://www.rust-lang.org/tools/install) (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh && . "$HOME/.cargo/env"`)
+- libclang and [protoc](https://protobuf.dev/installation/) ≥ 3.15 — on macOS just `brew install protobuf`; on Ubuntu apt's protoc is too old, so:
+```sh
+apt update && apt install -y libclang-dev unzip
+curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-x86_64.zip
+unzip -o protoc-25.3-linux-x86_64.zip -d /usr/local bin/protoc 'include/*'
+```
 
 **2. Build from source**:`vector setup` detects the machine and installs the right backends:
 ```sh
@@ -143,7 +155,7 @@ epoch 29: 0.00006974556 : f32
 [[0.0061098086], [-0.7051838], [-0.99085563], ...] : f32
 [[0.00000008742278], [-0.70710677], [-1], ...] : f32
 ```
-Add `--accelerate` to run on the machine's GPU or TPU — vector picks whichever accelerator is installed:
+Add `--accelerate` to run on the machine's GPU or TPU, vector picks whichever accelerator is installed:
 ```sh
 vector sin.vec --accelerate
 ```
@@ -176,5 +188,5 @@ The server compiles the model once through XLA; wrong shapes get a loud `{"error
 
 - Follow the intuitive and minimalist coding established in the codebase.
 - Try bringing table, plot, etc up to parity with equivalent Python libs.
-- Create an official Docker image.
+- Create an official Docker image, test on different cloud platforms. 
 - Make the docs intuitive.

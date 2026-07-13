@@ -18,7 +18,7 @@ impl Engine {
         let plugin_path = plugin_path();
         let api = pjrt::plugin(&plugin_path)
             .load()
-            .unwrap_or_else(|e| die(&format!("cannot load PJRT plugin at {}: {}", plugin_path, e)));
+            .unwrap_or_else(|e| die(&format!("cannot load PJRT plugin at {}: {}{}", plugin_path, e, missing_libs(&plugin_path))));
         let client = Client::builder(&api)
             .build()
             .unwrap_or_else(|e| die(&format!("cannot create PJRT client: {}", e)));
@@ -64,6 +64,27 @@ impl Engine {
         let executable = self.prepare(mlir);
         self.run(&executable, feeds)
     }
+}
+
+fn missing_libs(plugin_path: &str) -> String {
+    if !cfg!(target_os = "linux") {
+        return String::new();
+    }
+    let Ok(out) = std::process::Command::new("ldd").arg(plugin_path).output() else {
+        return String::new();
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let missing: Vec<&str> = text.lines()
+        .filter(|l| l.contains("not found"))
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    if missing.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\nmissing libraries: {}\ninstall them (for cuda: CUDA runtime + cuDNN 9) and make them visible with LD_LIBRARY_PATH",
+        missing.join(", ")
+    )
 }
 
 pub fn fnv64(bytes: &[u8]) -> u64 {
