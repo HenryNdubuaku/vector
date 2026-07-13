@@ -300,7 +300,13 @@ fn setup_auto() {
 
 fn report_default() {
     match default_backend() {
-        Some(b) => println!("programs will run on: {}", b),
+        Some(b) => {
+            println!("programs will run on: {}", b);
+            let missing = runtime::missing_libs(&backend_path(b));
+            if !missing.is_empty() {
+                println!("warning: {} won't load until its libraries are installed:{}", b, missing);
+            }
+        }
         None => println!("no backend installed; run `vector setup`"),
     }
     if fs::metadata(backend_path("metal")).is_ok() {
@@ -376,6 +382,10 @@ fn setup(backend: &str) {
         die(&format!("download completed but {} is missing", path));
     }
     println!("installed {}", path);
+    let missing = runtime::missing_libs(&path);
+    if !missing.is_empty() {
+        println!("warning: the {} plugin needs libraries this machine doesn't have yet:{}", backend, missing);
+    }
 }
 
 fn main() {

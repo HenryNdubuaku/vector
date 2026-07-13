@@ -66,7 +66,7 @@ impl Engine {
     }
 }
 
-fn missing_libs(plugin_path: &str) -> String {
+pub fn missing_libs(plugin_path: &str) -> String {
     if !cfg!(target_os = "linux") {
         return String::new();
     }
