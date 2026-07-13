@@ -156,7 +156,7 @@ vector filename.vec --accelerate
 
 **4. Read more**: [docs/reference.md](docs/reference.md) covers the whole language; [example project](example/) is a simple ML project.
 
-## Benchmarks
+## A full programming language with JAX-level speed
 
 - 200 full-batch gradient-descent steps of a 1→1024→1024→1 tanh network on 2048 points of sin(x), f32. 
 - Full-batch steps minimize Python dispatch overhead, which is generous to eager PyTorch. 
@@ -170,8 +170,8 @@ vector filename.vec --accelerate
 | Apple M5 Max GPU (Metal)  | **0.27s** | —          | 0.32s           | 0.30s              |
 | GPU-box CPU (x86)         | 7.60s     | **6.90s**  | 13.50s          | 14.81s             |
 | NVIDIA RTX 4000 Ada       | **0.09s** | **0.09s**  | 0.29s           | 0.25s              |
-| TPU-VM CPU (x86)          | **3.67s** | —          | —               | —                  |
-| Google TPU                | **0.01s** | —          | —               | —                  |
+| TPU-VM CPU (x86)          | **1.70s** | 3.46s      | —               | —                  |
+| Google TPU                | **0.01s** | **0.01s**  | —               | —                  |
 
 ## Roadmap
 

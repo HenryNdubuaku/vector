@@ -13,6 +13,24 @@ pub struct Table {
     pub columns: Vec<Vec<f64>>,
 }
 
+static CACHE: std::sync::Mutex<Option<(String, std::time::SystemTime, std::sync::Arc<Table>)>> =
+    std::sync::Mutex::new(None);
+
+fn cached_table(path: &str) -> std::sync::Arc<Table> {
+    let stamp = fs::metadata(path).and_then(|m| m.modified()).ok();
+    let mut cache = CACHE.lock().unwrap();
+    if let (Some((p, t, table)), Some(stamp)) = (cache.as_ref(), stamp) {
+        if p == path && *t == stamp {
+            return table.clone();
+        }
+    }
+    let table = std::sync::Arc::new(read_table(path));
+    if let Some(stamp) = stamp {
+        *cache = Some((path.to_string(), stamp, table.clone()));
+    }
+    table
+}
+
 fn parse_rows(text: &str, path: &str) -> Vec<Vec<String>> {
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut row: Vec<String> = Vec::new();
@@ -119,7 +137,7 @@ pub fn read_table(path: &str) -> Table {
 }
 
 pub fn csv_host_buffer(path: &str, name: &str, shape: &[usize]) -> HostBuffer {
-    let table = read_table(path);
+    let table = cached_table(path);
     let j = table.names.iter().position(|n| n == name)
         .unwrap_or_else(|| die(&format!("{} changed since compilation: column {} is missing", path, name)));
     let col = &table.columns[j];
@@ -199,7 +217,7 @@ pub fn write_csv(spec: &SaveSpec, tensors: &[Tensor]) {
 
 impl Tracer {
     pub fn load_csv(&mut self, path: &str) -> TVal {
-        let table = read_table(path);
+        let table = cached_table(path);
         let n = table.columns[0].len();
         let mut fields = Vec::new();
         for name in &table.names {
