@@ -42,7 +42,9 @@ const USAGE: &str = "usage: vector [file.vec]
   vector <file.vec>             compile and run a program
   vector serve <m.mlir> [port]  serve an exported model over http (default port 8080)
   vector setup                  detect this machine and install the right backends
-  vector version                print version";
+  vector version                print version
+
+  --accelerate                  run on the machine's accelerator (gpu/tpu) instead of the default";
 
 struct VectorError(String);
 
@@ -77,9 +79,27 @@ fn backend_path(backend: &str) -> String {
     format!("{}/.vector/{}", home(), plugin_file(backend))
 }
 
+fn default_backend() -> Option<&'static str> {
+    ["tpu", "cuda", "rocm", "oneapi", "cpu"].into_iter()
+        .find(|b| fs::metadata(backend_path(b)).is_ok())
+}
+
+static ACCELERATOR: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+fn engage_accelerator() {
+    let found = ["tpu", "cuda", "rocm", "oneapi", "metal"].into_iter()
+        .find(|b| fs::metadata(backend_path(b)).is_ok())
+        .unwrap_or_else(|| die("no accelerator installed; run `vector setup`"));
+    let _ = ACCELERATOR.set(found);
+    eprintln!("accelerating on {}", found);
+}
+
 fn plugin_path() -> String {
     if let Ok(p) = env::var("PJRT_PLUGIN_PATH") {
         return p;
+    }
+    if let Some(backend) = ACCELERATOR.get() {
+        return backend_path(backend);
     }
     if let Ok(backend) = env::var("VECTOR_BACKEND") {
         let path = backend_path(&backend);
@@ -88,11 +108,8 @@ fn plugin_path() -> String {
         }
         return path;
     }
-    for backend in ["tpu", "cuda", "rocm", "oneapi", "cpu"] {
-        let path = backend_path(backend);
-        if fs::metadata(&path).is_ok() {
-            return path;
-        }
+    if let Some(backend) = default_backend() {
+        return backend_path(backend);
     }
     die("no PJRT plugin found; run `vector setup` or set PJRT_PLUGIN_PATH");
 }
@@ -271,12 +288,23 @@ fn detect_backends() -> Vec<&'static str> {
 fn setup_auto() {
     let backends = detect_backends();
     println!("detected backends: {}", backends.join(", "));
-    for backend in backends {
+    for &backend in &backends {
         if fs::metadata(backend_path(backend)).is_ok() {
             println!("{} already installed", backend);
             continue;
         }
         setup(backend);
+    }
+    report_default();
+}
+
+fn report_default() {
+    match default_backend() {
+        Some(b) => println!("programs will run on: {}", b),
+        None => println!("no backend installed; run `vector setup`"),
+    }
+    if fs::metadata(backend_path("metal")).is_ok() {
+        println!("metal installed (experimental); opt in with VECTOR_BACKEND=metal");
     }
 }
 
@@ -352,11 +380,19 @@ fn setup(backend: &str) {
 
 fn main() {
     install_panic_hook();
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
+    let accelerate = args.iter().any(|a| a == "--accelerate");
+    args.retain(|a| a != "--accelerate");
     let outcome = std::panic::catch_unwind(|| {
+        if accelerate {
+            engage_accelerator();
+        }
         match args.get(1).map(String::as_str) {
             Some("setup") if args.len() == 2 => setup_auto(),
-            Some("setup") if args.len() == 3 => setup(&args[2]),
+            Some("setup") if args.len() == 3 => {
+                setup(&args[2]);
+                report_default();
+            }
             Some("serve") if args.len() == 3 => serve::serve(&args[2], 8080),
             Some("serve") if args.len() == 4 => {
                 let port = args[3].parse()

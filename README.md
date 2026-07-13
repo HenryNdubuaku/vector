@@ -2,7 +2,11 @@
 
 Programming language for machine learning, built on top of XLA compiler.
 
-Vector is designed for machine learning and ships numpy-like vectorized functions:
+## Overview
+
+The tour below is one program: it trains a small network to approximate sin(x), then saves, plots, exports and serves the result. Paste the cells into one `.vec` file in order and run it.
+
+Vector ships numpy-like vectorized functions, and math is elementwise over any shape — `sin` of a matrix is the matrix of sines. Sample 16,000 points, then chop them into 500 batches of 32, one batch per row (the transpose interleaves the sorted samples so every batch spans the whole domain):
 
 ```python
 n = 16000
@@ -12,16 +16,15 @@ epochs = 30
 batch_size = 32
 batches = 500
 
-inputs = reshape(linspace(-pi, pi, n), n, 1)
+xs = linspace(-pi, pi, n)
+inputs = reshape(xs, n, 1)
 targets = sin(inputs)
-eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
-eval_targets = sin(eval_inputs)
 
-shuffled_x = reshape(transpose(reshape(reshape(inputs, n), batch_size, batches)), n, 1)
-shuffled_t = reshape(transpose(reshape(reshape(targets, n), batch_size, batches)), n, 1)
+batches_x = transpose(reshape(xs, batch_size, batches))
+batches_t = sin(batches_x)
 ```
 
-Vector is functional like JAX, but with modules:
+Vector is functional like JAX, but with modules. A module packs weights and methods together, and an instance is an immutable value — training never mutates it, it builds an updated one:
 
 ```python
 module Mlp(hidden):
@@ -38,29 +41,30 @@ module Mlp(hidden):
 model = Mlp(hidden_size)
 ```
 
-Vector compiles through XLA and runs on Nvidia, AMD, Apple, TPUs and more. Loops become one XLA while op, and `print` inside a loop logs one neat line per iteration:
+Training is whole-model arithmetic: `grad` returns gradients shaped like the model, so one subtraction updates every weight. `take(bx, step)` picks row `step` — one minibatch. The loop compiles to a single XLA while op, and `print` inside it logs one line per epoch:
 
 ```python
-fn train_epoch(model, xs, ts, lr, batch, batches):
+fn train_epoch(model, bx, bt, lr, batch, batches):
   m = model
   for step in 0..batches:
-    offset = step * batch
-    x = slice(xs, offset, batch)
-    t = slice(ts, offset, batch)
+    x = reshape(take(bx, step), batch, 1)
+    t = reshape(take(bt, step), batch, 1)
     m = m - lr * grad(m.loss, x, t)
   m
 
 for epoch in 0..epochs:
-  model = train_epoch(model, shuffled_x, shuffled_t, learning_rate, batch_size, batches)
+  model = train_epoch(model, batches_x, batches_t, learning_rate, batch_size, batches)
   print(model.loss(inputs, targets))
 ```
 
-Vector saves weights as safetensors for cross-compatibility, and data as numpy .npy files:
+Weights save as safetensors and tensors as numpy `.npy` — both readable from Python, and PyTorch checkpoints load back the same way. Evaluate the reloaded model on nine fresh points:
 
 ```python
 save(model, "mlp.safetensors")
 model = load("mlp.safetensors")
 
+eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
+eval_targets = sin(eval_inputs)
 print(model(eval_inputs))
 print(eval_targets)
 
@@ -68,7 +72,7 @@ save(model(eval_inputs), "predictions.npy")
 print(load("predictions.npy") - eval_targets)
 ```
 
-Vector reads and writes csv tables as records of columns, like pandas:
+A table is just a record of columns, saved and loaded as csv, like pandas:
 
 ```python
 save({x: inputs, sin: targets, mlp: model(inputs)}, "predictions.csv")
@@ -76,7 +80,7 @@ table = load("predictions.csv")
 print(mean(table.mlp - table.sin))
 ```
 
-Vector plots with a matplotlib-like interface, rendered as svg:
+Plotting is matplotlib-style, rendered as svg:
 
 ```python
 plot(inputs, targets, "sin")
@@ -85,7 +89,7 @@ title("sin approximation")
 savefig("sin.svg")
 ```
 
-Vector loads, resizes, crops and saves png images as tensors:
+An image is a tensor of pixels in 0..1 — load, resize, crop and save png, and show it in a figure:
 
 ```python
 grid = sin(linspace(-pi, pi, 64))
@@ -96,14 +100,14 @@ title("sin(x) * sin(y)")
 savefig("surface.svg")
 ```
 
-Vector reads, writes and plays audio as wav records `{samples, rate}`:
+Audio is a record `{samples, rate}` — synthesize half a second of A4 and save it as wav:
 
 ```python
 tone = sin(linspace(0.0, 1382.3, 4000))
 save({samples: tone * 0.5, rate: 8000.0}, "tone.wav")
 ```
 
-Vector exports the computation as StableHLO text, runnable by anything that speaks it:
+One line exports the trained forward pass as StableHLO — the portable graph format that JAX, IREE and every XLA runtime consume. `vector serve` (below) answers http requests with it:
 
 ```python
 export(model, "mlp.mlir", eval_inputs)
@@ -126,6 +130,10 @@ Step 3: Copy the example from the overview into a .vec file and run with
 ```sh
 vector filename.vec
 ```
+Add `--accelerate` to run on the machine's GPU or TPU — vector picks whichever accelerator is installed:
+```sh
+vector filename.vec --accelerate
+```
 
 Step 4: Serve the exported model over http and query it
 ```sh
@@ -139,8 +147,6 @@ The server compiles the model once through XLA and answers with `{"outputs": [..
 
 ## Roadmap
 
-- test on GPU
-- test on TPU 
 - July 2026: Parity with Python libs, integrate into XLA/Python/ML ecosystem. 
 - August 2026: Vector notebooks, integrate into academic curriculums. 
 - September 2026: Large-scale distributed ML, integrate into enterprises. 

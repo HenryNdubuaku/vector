@@ -3,7 +3,7 @@
 import mlp
 
 n = 16000
-hidden_size = 10240
+hidden_size = 1024
 learning_rate = 0.1
 epochs = 30
 batch_size = 64
@@ -14,22 +14,21 @@ targets = sin(inputs)
 eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
 eval_targets = sin(eval_inputs)
 
-shuffled_x = reshape(transpose(reshape(reshape(inputs, n), batch_size, batches)), n, 1)
-shuffled_t = reshape(transpose(reshape(reshape(targets, n), batch_size, batches)), n, 1)
+batches_x = transpose(reshape(reshape(inputs, n), batch_size, batches))
+batches_t = transpose(reshape(reshape(targets, n), batch_size, batches))
 
-fn train_epoch(model, xs, ts, lr, batch, batches):
+fn train_epoch(model, bx, bt, lr, batch, batches):
   m = model
   for step in 0..batches:
-    offset = step * batch
-    x = slice(xs, offset, batch)
-    t = slice(ts, offset, batch)
+    x = reshape(take(bx, step), batch, 1)
+    t = reshape(take(bt, step), batch, 1)
     m = m - lr * grad(m.loss, x, t)
   m
 
 model = Mlp(hidden_size)
 
 for epoch in 0..epochs:
-  model = train_epoch(model, shuffled_x, shuffled_t, learning_rate, batch_size, batches)
+  model = train_epoch(model, batches_x, batches_t, learning_rate, batch_size, batches)
   print(model.loss(inputs, targets))
 
 save(model, "mlp.safetensors")
