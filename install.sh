@@ -10,6 +10,10 @@ if [ "$(uname -s)" = "Darwin" ]; then
 else
     $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get update
     $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y libclang-dev unzip curl git build-essential ca-certificates
+    latest_gcc="$(ls /usr/lib/gcc/x86_64-linux-gnu/ 2>/dev/null | grep -E '^[0-9]+$' | sort -n | tail -1)"
+    if [ -n "$latest_gcc" ] && [ ! -d "/usr/include/c++/$latest_gcc" ]; then
+        $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y "libstdc++-$latest_gcc-dev" || true
+    fi
     need_protoc=1
     if command -v protoc >/dev/null; then
         case "$(protoc --version | cut -d' ' -f2)" in
