@@ -19,9 +19,17 @@ pub struct Muffle {
     err: i32,
 }
 
+static MUFFLING_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn disable_muffling() {
+    MUFFLING_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 impl Muffle {
     fn engage() -> Option<Muffle> {
-        if std::env::var_os("VECTOR_LOGS").is_some() {
+        if std::env::var_os("VECTOR_LOGS").is_some()
+            || MUFFLING_OFF.load(std::sync::atomic::Ordering::Relaxed)
+        {
             return None;
         }
         use std::io::Write;
@@ -83,6 +91,9 @@ impl Engine {
     }
 
     pub fn with_path(plugin_path: String) -> Engine {
+        if plugin_path.contains("metal") {
+            MUFFLING_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         let muffle = Muffle::engage();
         let api = pjrt::plugin(&plugin_path).load();
         let client = api.as_ref().ok().map(|api| Client::builder(api).build());
@@ -101,14 +112,18 @@ impl Engine {
     pub fn prepare(&self, mlir: &str) -> LoadedExecutable {
         let flags = std::env::var("XLA_FLAGS").unwrap_or_default();
         let keyed = format!("{}\n{:?}\n{}\n{}", self.plugin_path, self.api.version(), flags, mlir);
+        let cacheable = !self.plugin_path.contains("metal");
         let muffle = Muffle::engage();
-        let executable = match load_cached(&self.client, &keyed) {
+        let cached = if cacheable { load_cached(&self.client, &keyed) } else { None };
+        let executable = match cached {
             Some(executable) => Ok(executable),
             None => {
                 let program = pjrt::Program::new(MLIR, mlir.as_bytes());
                 let built = LoadedExecutable::builder(&*self.client, &program).build();
-                if let Ok(executable) = &built {
-                    store_cache(executable, &keyed);
+                if cacheable {
+                    if let Ok(executable) = &built {
+                        store_cache(executable, &keyed);
+                    }
                 }
                 built
             }

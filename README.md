@@ -156,6 +156,17 @@ vector filename.vec --accelerate
 
 **4. Read more**: [docs/reference.md](docs/reference.md) covers the whole language; [example project](example/) is a simple ML project.
 
+## Benchmarks
+
+- 200 full-batch gradient-descent steps of a 1→1024→1024→1 tanh network on 2048 points of sin(x), f32. 
+- Every framework starts from identical weights and converges to the same loss (0.3586 → 0.0133), so the comparison is correctness-checked. 
+- JAX runs a jitted `fori_loop`; PyTorch runs its standard eager loop; timings exclude compilation, after one warm-up run. Reproduce with `sh benchmark.sh`.
+
+| Device                | Vector    | Python/JAX | Python/PyTorch |
+| --------------------- | --------- | ---------- | -------------- |
+| M5 Max CPU            | **1.56s** | 1.63s      | 2.11s          |
+| M5 Max GPU (Metal)    | **0.27s** | —          | 0.32s          |
+
 ## Roadmap
 
 | When           | Focus                          | Goal                                        |

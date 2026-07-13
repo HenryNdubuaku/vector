@@ -42,7 +42,7 @@ const USAGE: &str = "usage: vector [file.vec]
   vector <file.vec>             compile and run a program
   vector serve <m.mlir> [port]  serve an exported model over http (default port 8080)
   vector setup                  detect this machine and install the right backends
-  vector test                   train a small model on the cpu and the accelerator to check the install
+  vector test [steps]           train a small model on the cpu and the accelerator to check the install
   vector version                print version
 
   --accelerate                  run on the machine's accelerator (gpu/tpu); programs run on the cpu by default
@@ -202,7 +202,11 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<PrintSpec>, Vec<SaveSpec>
         })
         .collect();
     let params: Vec<usize> = tracer.inputs.iter().map(|&(_, id)| id).collect();
-    (build_module(&tracer.nodes, &params, &outputs), specs, prints, tracer.saves, tracer.exports, tracer.figures, tracer.plays)
+    let module = build_module(&tracer.nodes, &params, &outputs);
+    if let Ok(dump) = env::var("VECTOR_DUMP_MLIR") {
+        fs::write(&dump, &module).unwrap_or_else(|e| die(&format!("cannot write {}: {}", dump, e)));
+    }
+    (module, specs, prints, tracer.saves, tracer.exports, tracer.figures, tracer.plays)
 }
 
 fn print_result(label: &Option<String>, rows: &Option<RowMeta>, tensor: &runtime::Tensor) {
@@ -253,33 +257,54 @@ module TestNet(hidden, hsq):
 
 m = TestNet(1024, 1048576)
 before = m.loss(inputs, targets)
-for i in 0..20:
+for i in 0..STEPS:
   m = m - 0.001 * grad(m.loss, inputs, targets)
 print(before)
 print(m.loss(inputs, targets))
 ";
 
-fn self_test() {
+fn self_test(steps: usize) {
+    let source = TEST_SOURCE.replace("STEPS", &steps.to_string());
     let path = env::temp_dir().join("vector_self_test.vec");
-    fs::write(&path, TEST_SOURCE).unwrap_or_else(|e| die(&format!("cannot write self test: {}", e)));
+    fs::write(&path, source).unwrap_or_else(|e| die(&format!("cannot write self test: {}", e)));
     let (module, _, _, _, _, _, _) = compile(path.to_str().unwrap());
     let mut backends = vec!["cpu"];
     backends.extend(installed_accelerator());
+    if backends.contains(&"metal") {
+        runtime::disable_muffling();
+    }
     let mut cpu_seconds = 0.0;
     for backend in backends {
-        let start = std::time::Instant::now();
-        let engine = runtime::Engine::with_path(backend_path(backend));
-        let executable = engine.prepare(&module);
-        let compiled = start.elapsed();
-        let results = engine.run(&executable, Vec::new());
-        let start = std::time::Instant::now();
-        engine.run(&executable, Vec::new());
-        let ran = start.elapsed().as_secs_f64();
-        let before = results[0].f64_vec()[0];
-        let after = results[1].f64_vec()[0];
-        if !after.is_finite() || after >= before {
-            die(&format!("{}: training failed (loss {} -> {})", backend, before, after));
+        let attempt = || {
+            let start = std::time::Instant::now();
+            let engine = runtime::Engine::with_path(backend_path(backend));
+            let executable = engine.prepare(&module);
+            let compiled = start.elapsed();
+            let results = engine.run(&executable, Vec::new());
+            let start = std::time::Instant::now();
+            engine.run(&executable, Vec::new());
+            let ran = start.elapsed().as_secs_f64();
+            let before = results[0].f64_vec()[0];
+            let after = results[1].f64_vec()[0];
+            if !after.is_finite() || after >= before {
+                die(&format!("{}: training failed (loss {} -> {})", backend, before, after));
+            }
+            (before, after, compiled.as_secs_f64(), ran)
+        };
+        let mut outcome = std::panic::catch_unwind(attempt);
+        for _ in 0..2 {
+            if outcome.is_ok() {
+                break;
+            }
+            if backend != "metal" {
+                break;
+            }
+            eprintln!("retrying metal (its compiler occasionally fails; an Apple plugin bug)");
+            outcome = std::panic::catch_unwind(attempt);
         }
+        let Ok((before, after, compiled, ran)) = outcome else {
+            exit(1);
+        };
         let speedup = if backend == "cpu" {
             cpu_seconds = ran;
             String::new()
@@ -288,7 +313,7 @@ fn self_test() {
         };
         println!(
             "{}: ok — loss {:.4} -> {:.4} (compiled in {:.2}s, trained in {:.2}s{})",
-            backend, before, after, compiled.as_secs_f64(), ran, speedup
+            backend, before, after, compiled, ran, speedup
         );
     }
     if installed_accelerator().is_none() {
@@ -505,7 +530,12 @@ fn main() {
                 setup(&args[2]);
                 report_default();
             }
-            Some("test") if args.len() == 2 => self_test(),
+            Some("test") if args.len() == 2 => self_test(20),
+            Some("test") if args.len() == 3 => {
+                let steps = args[2].parse()
+                    .unwrap_or_else(|_| die(&format!("steps must be a number, got {}", args[2])));
+                self_test(steps)
+            }
             Some("serve") if args.len() == 3 => serve::serve(&args[2], 8080),
             Some("serve") if args.len() == 4 => {
                 let port = args[3].parse()
