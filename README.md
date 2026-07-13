@@ -141,10 +141,16 @@ git clone https://github.com/HenryNdubuaku/vector.git
 cd vector 
 cargo install --path . && vector setup 
 ```
+On NVIDIA machines the cuda backend needs the CUDA 13 runtime, cuDNN 9 and nvcc,`vector setup` warns and names anything missing. On a bare container:
+```sh
+apt install -y cuda-libraries-13-1 cuda-cupti-13-1 libcudnn9-cuda-13 cuda-nvcc-13-1
+export LD_LIBRARY_PATH=/usr/local/cuda-13.1/lib64:/usr/local/cuda-13.1/extras/CUPTI/lib64
+export XLA_FLAGS=--xla_gpu_cuda_data_dir=/usr/local/cuda-13.1
+```
 
 **3. Run the tour**: paste the overview cells into `sin.vec`:
 ```sh
-vector sin.vec
+vector examples/train.vec
 ```
 You should see the loss fall as it trains, then the predictions land on sin(x):
 ```
@@ -155,9 +161,9 @@ epoch 29: 0.00006974556 : f32
 [[0.0061098086], [-0.7051838], [-0.99085563], ...] : f32
 [[0.00000008742278], [-0.70710677], [-1], ...] : f32
 ```
-Add `--accelerate` to run on the machine's GPU or TPU, vector picks whichever accelerator is installed:
+Programs run on the CPU by default; add `--accelerate` to run on the machine's GPU or TPU — vector picks whichever accelerator is installed:
 ```sh
-vector sin.vec --accelerate
+vector examples/train.vec --accelerate
 ```
 
 **4. Serve the exported model** over http and query it:

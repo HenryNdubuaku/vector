@@ -44,7 +44,7 @@ const USAGE: &str = "usage: vector [file.vec]
   vector setup                  detect this machine and install the right backends
   vector version                print version
 
-  --accelerate                  run on the machine's accelerator (gpu/tpu) instead of the default";
+  --accelerate                  run on the machine's accelerator (gpu/tpu); programs run on the cpu by default";
 
 struct VectorError(String);
 
@@ -79,18 +79,17 @@ fn backend_path(backend: &str) -> String {
     format!("{}/.vector/{}", home(), plugin_file(backend))
 }
 
-fn default_backend() -> Option<&'static str> {
-    ["tpu", "cuda", "rocm", "oneapi", "cpu"].into_iter()
+fn installed_accelerator() -> Option<&'static str> {
+    ["tpu", "cuda", "rocm", "oneapi", "metal"].into_iter()
         .find(|b| fs::metadata(backend_path(b)).is_ok())
 }
 
-static ACCELERATOR: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+static FLAG_BACKEND: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
 
 fn engage_accelerator() {
-    let found = ["tpu", "cuda", "rocm", "oneapi", "metal"].into_iter()
-        .find(|b| fs::metadata(backend_path(b)).is_ok())
+    let found = installed_accelerator()
         .unwrap_or_else(|| die("no accelerator installed; run `vector setup`"));
-    let _ = ACCELERATOR.set(found);
+    let _ = FLAG_BACKEND.set(found);
     eprintln!("accelerating on {}", found);
 }
 
@@ -98,7 +97,7 @@ fn plugin_path() -> String {
     if let Ok(p) = env::var("PJRT_PLUGIN_PATH") {
         return p;
     }
-    if let Some(backend) = ACCELERATOR.get() {
+    if let Some(backend) = FLAG_BACKEND.get() {
         return backend_path(backend);
     }
     if let Ok(backend) = env::var("VECTOR_BACKEND") {
@@ -108,8 +107,9 @@ fn plugin_path() -> String {
         }
         return path;
     }
-    if let Some(backend) = default_backend() {
-        return backend_path(backend);
+    let path = backend_path("cpu");
+    if fs::metadata(&path).is_ok() {
+        return path;
     }
     die("no PJRT plugin found; run `vector setup` or set PJRT_PLUGIN_PATH");
 }
@@ -299,18 +299,17 @@ fn setup_auto() {
 }
 
 fn report_default() {
-    match default_backend() {
-        Some(b) => {
-            println!("programs will run on: {}", b);
-            let missing = runtime::missing_libs(&backend_path(b));
-            if !missing.is_empty() {
-                println!("warning: {} won't load until its libraries are installed:{}", b, missing);
-            }
-        }
-        None => println!("no backend installed; run `vector setup`"),
+    if fs::metadata(backend_path("cpu")).is_ok() {
+        println!("programs run on the cpu; add --accelerate to use the gpu/tpu");
+    } else {
+        println!("no cpu plugin installed; run `vector setup`");
     }
-    if fs::metadata(backend_path("metal")).is_ok() {
-        println!("metal installed (experimental); opt in with VECTOR_BACKEND=metal");
+    if let Some(b) = installed_accelerator() {
+        println!("--accelerate will run on: {}", b);
+        let missing = runtime::missing_libs(&backend_path(b));
+        if !missing.is_empty() {
+            println!("warning: {} won't load until its libraries are installed:{}", b, missing);
+        }
     }
 }
 
