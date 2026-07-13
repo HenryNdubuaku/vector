@@ -8,8 +8,8 @@ if [ "$(uname -s)" = "Darwin" ]; then
     command -v brew >/dev/null || { echo "vector needs homebrew on macos: https://brew.sh" >&2; exit 1; }
     command -v protoc >/dev/null || brew install protobuf
 else
-    $SUDO apt-get update
-    $SUDO apt-get install -y libclang-dev unzip curl git build-essential ca-certificates
+    $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get update
+    $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y libclang-dev unzip curl git build-essential ca-certificates
     need_protoc=1
     if command -v protoc >/dev/null; then
         case "$(protoc --version | cut -d' ' -f2)" in
