@@ -20,7 +20,7 @@ vector benchmark "$STEPS" | tee -a "$OUT" || echo "vector failed"
 echo
 
 echo "== python/jax =="
-python3 - <<'EOF' 2>/dev/null | tee -a "$OUT" || echo "jax not installed (pip install jax); skipped"
+if JAX_OUT="$(python3 - <<'EOF' 2>/dev/null
 import os, time, warnings
 warnings.filterwarnings("ignore")
 import jax, jax.numpy as jnp
@@ -75,10 +75,15 @@ for name, dev in devices.items():
             times.append(time.perf_counter() - t0)
         print(f"{name}: ok — loss {before:.4f} -> {float(loss(trained)):.4f} (trained in {statistics.median(times):.2f}s median of 5)")
 EOF
+)"; then
+    printf '%s\n' "$JAX_OUT" | tee -a "$OUT"
+else
+    echo "jax not installed (pip install jax); skipped"
+fi
 echo
 
 echo "== python/pytorch =="
-python3 - <<'EOF' 2>/dev/null | tee -a "$OUT" || echo "pytorch not installed (pip install torch); skipped"
+if TORCH_OUT="$(python3 - <<'EOF' 2>/dev/null
 import os, time, math
 import torch
 
@@ -151,12 +156,20 @@ for device in devices:
         except Exception as e:
             print(f"{device} ({name}): skipped ({type(e).__name__})")
 EOF
+)"; then
+    printf '%s\n' "$TORCH_OUT" | tee -a "$OUT"
+else
+    echo "pytorch not installed (pip install torch); skipped"
+fi
 echo
 
-losses=$(grep -o 'loss [0-9.]* -> [0-9.]*' "$OUT" | sort -u | wc -l | tr -d ' ')
-if [ "$losses" = "1" ]; then
-    echo "correctness: all frameworks computed the same losses"
+spread=$(grep -o 'loss [0-9.]* -> [0-9.]*' "$OUT" | awk '
+    { if (NR == 1 || $2 < bmin) bmin = $2; if (NR == 1 || $2 > bmax) bmax = $2;
+      if (NR == 1 || $4 < amin) amin = $4; if (NR == 1 || $4 > amax) amax = $4; }
+    END { print (bmax - bmin <= 0.001 && amax - amin <= 0.001) ? "ok" : "bad" }')
+if [ "$spread" = "ok" ]; then
+    echo "correctness: all frameworks computed the same losses (within 0.001; bf16 devices like TPUs round differently)"
 else
-    echo "WARNING: losses differ across frameworks; the comparison is not valid"
+    echo "WARNING: losses differ across frameworks by more than 0.001; the comparison is not valid"
     grep -o 'loss [0-9.]* -> [0-9.]*' "$OUT" | sort -u
 fi

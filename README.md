@@ -160,16 +160,18 @@ vector filename.vec --accelerate
 
 - 200 full-batch gradient-descent steps of a 1→1024→1024→1 tanh network on 2048 points of sin(x), f32. 
 - Full-batch steps minimize Python dispatch overhead, which is generous to eager PyTorch. 
-- Every framework starts from identical weights; the script verifies all frameworks compute the same losses (0.3586 → 0.0133) and prints the verdict. 
+- Every framework starts from identical weights; the script verifies all frameworks compute the same losses (0.3586 → 0.0133, within 0.001 — TPUs round f32 matmuls through bf16) and prints the verdict. 
 - JAX runs a jitted `fori_loop`; PyTorch runs both its standard eager loop and a `torch.compile`d step. 
 - Timings are the median of 5 runs after one warm-up, excluding compilation; the script prints all framework versions and GPU info. 
 
-| Device                    | Vector    | Python/JAX | PyTorch (eager) | PyTorch (compiled) |
+| Device                    | Vector    | JAX        | PyTorch (eager) | PyTorch (compiled) |
 | ------------------------- | --------- | ---------- | --------------- | ------------------ |
 | Apple M5 Max CPU          | **1.51s** | 1.62s      | 2.11s           | 2.15s              |
 | Apple M5 Max GPU (Metal)  | **0.27s** | —          | 0.32s           | 0.30s              |
-| GPU-box CPU (x86)         | **7.61s** | —          | 14.19s          | —                  |
-| NVIDIA RTX 4000 Ada       | **0.09s** | —          | 0.29s           | —                  |
+| GPU-box CPU (x86)         | 7.60s     | **6.90s**  | 13.50s          | 14.81s             |
+| NVIDIA RTX 4000 Ada       | **0.09s** | **0.09s**  | 0.29s           | 0.25s              |
+| TPU-VM CPU (x86)          | **3.67s** | —          | —               | —                  |
+| Google TPU                | **0.01s** | —          | —               | —                  |
 
 ## Roadmap
 
