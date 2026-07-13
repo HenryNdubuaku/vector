@@ -68,7 +68,7 @@ for epoch in 0..epochs:
   print(model.loss(inputs, targets))
 ```
 
-Weights save as safetensors and tensors as numpy `.npy`: both readable from Python, and PyTorch checkpoints load back the same way. Evaluate the reloaded model on nine fresh points:
+Weights save as safetensors and tensors as numpy `.npy`: both readable from Python, and PyTorch checkpoints load back the same way.
 
 ```python
 save(model, "mlp.safetensors")
@@ -124,50 +124,37 @@ One line exports the trained forward pass as [StableHLO](https://openxla.org/sta
 export(model, "mlp.mlir", eval_inputs)
 ```
 
-## Get Started
-
-**1. Install** on any machine with a CPU, GPU or TPU — the script installs the toolchain, builds vector, and sets up the right backends for the hardware it finds:
-```sh
-curl -fsSL https://raw.githubusercontent.com/HenryNdubuaku/vector/main/install.sh | sh
-. "$HOME/.cargo/env"
-```
-On NVIDIA machines the cuda backend also needs the CUDA 13 runtime, cuDNN 9 and nvcc — `vector setup` warns and names anything missing. On a bare container:
-```sh
-sudo apt install -y cuda-libraries-13-1 cuda-cupti-13-1 libcudnn9-cuda-13 cuda-nvcc-13-1
-export LD_LIBRARY_PATH=/usr/local/cuda-13.1/lib64:/usr/local/cuda-13.1/extras/CUPTI/lib64
-export XLA_FLAGS=--xla_gpu_cuda_data_dir=/usr/local/cuda-13.1
-```
-
-**2. Run the tour**: paste the overview cells into `sin.vec`:
-```sh
-vector examples/train.vec
-```
-You should see the loss fall as it trains, then the predictions land on sin(x):
-```
-epoch 0: 0.19202535 : f32
-epoch 1: 0.17512359 : f32
-...
-epoch 29: 0.00006974556 : f32
-[[0.0061098086], [-0.7051838], [-0.99085563], ...] : f32
-[[0.00000008742278], [-0.70710677], [-1], ...] : f32
-```
-Programs run on the CPU by default; add `--accelerate` to run on the machine's GPU or TPU — vector picks whichever accelerator is installed:
-```sh
-vector examples/train.vec --accelerate
-```
-
-**3. Serve the exported model** over http and query it:
+You can serve the exported model over http and query it:
 ```sh
 vector serve mlp.mlir 8080
 ```
-```sh
-curl http://127.0.0.1:8080/
-# {"inputs":["9x1xf32"],"outputs":["9x1xf32"]}
 
+And make requests to the endpoint:
+```sh
 curl -d '{"inputs": [[[-3.14], [-2.36], [-1.57], [-0.79], [0.0], [0.79], [1.57], [2.36], [3.14]]]}' http://127.0.0.1:8080/
-# {"outputs":[[[-0.12487758],[-0.6564874],[-0.95240515], ...]]}
 ```
-The server compiles the model once through XLA; wrong shapes get a loud `{"error": ...}`.
+
+## Get Started
+
+**1. Install** on any machine with a CPU, Nvidia GPU, TPU, and AMD GPU:
+```sh
+curl -fsSL https://raw.githubusercontent.com/HenryNdubuaku/vector/main/install.sh | sh && . "$HOME/.cargo/env"
+```
+
+**2. Check the machine**: trains a small model on the CPU and the accelerator; if anything is missing, vector prints the exact commands to fix it:
+```sh
+vector test
+```
+
+**3. Run the tour**: paste the overview cells into a file `filename.vec`:
+```sh
+vector filename.vec
+```
+
+Programs run on the CPU by default; add `--accelerate` to run on the machine's GPU or TPU:
+```sh
+vector filename.vec --accelerate
+```
 
 **4. Read more**: [docs/reference.md](docs/reference.md) covers the whole language; [docs/examples.md](docs/examples.md) shows every feature as a runnable program with its verified output — generated from the test suite, so it can never go stale.
 

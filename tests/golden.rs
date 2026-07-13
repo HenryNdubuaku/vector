@@ -46,6 +46,14 @@ fn golden_cases() {
 }
 
 #[test]
+fn self_test_passes_on_this_machine() {
+    let output = run_vector(&["test"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(stdout.contains("cpu: ok"), "{}", stdout);
+}
+
+#[test]
 fn shape_mismatch_fails_at_trace_time() {
     let path = std::env::temp_dir().join("vector_shape_mismatch.vec");
     fs::write(&path, "print([1.0, 2.0] + [1.0, 2.0, 3.0])\n").unwrap();

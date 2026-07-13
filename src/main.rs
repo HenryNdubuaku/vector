@@ -42,6 +42,7 @@ const USAGE: &str = "usage: vector [file.vec]
   vector <file.vec>             compile and run a program
   vector serve <m.mlir> [port]  serve an exported model over http (default port 8080)
   vector setup                  detect this machine and install the right backends
+  vector test                   train a small model on the cpu and the accelerator to check the install
   vector version                print version
 
   --accelerate                  run on the machine's accelerator (gpu/tpu); programs run on the cpu by default
@@ -230,6 +231,71 @@ fn open_figure(path: &str) {
         .unwrap_or_else(|e| die(&format!("cannot open plot viewer: {}", e)));
 }
 
+const TEST_SOURCE: &str = "
+inputs = reshape(linspace(-pi, pi, 2048), 2048, 1)
+targets = sin(inputs)
+
+module TestNet(hidden, hsq):
+  w1 = reshape(sin(arange(hidden)), 1, hidden)
+  b1 = zeros(hidden)
+  w2 = reshape(sin(arange(hsq)), hidden, hidden) * 0.03
+  b2 = zeros(hidden)
+  w3 = reshape(sin(arange(hidden)), hidden, 1) * 0.05
+
+  forward(self, x):
+    h1 = tanh(matmul(x, self.w1) + self.b1)
+    h2 = tanh(matmul(h1, self.w2) + self.b2)
+    matmul(h2, self.w3)
+
+  loss(self, x, t):
+    d = self(x) - t
+    mean(d * d)
+
+m = TestNet(1024, 1048576)
+before = m.loss(inputs, targets)
+for i in 0..20:
+  m = m - 0.001 * grad(m.loss, inputs, targets)
+print(before)
+print(m.loss(inputs, targets))
+";
+
+fn self_test() {
+    let path = env::temp_dir().join("vector_self_test.vec");
+    fs::write(&path, TEST_SOURCE).unwrap_or_else(|e| die(&format!("cannot write self test: {}", e)));
+    let (module, _, _, _, _, _, _) = compile(path.to_str().unwrap());
+    let mut backends = vec!["cpu"];
+    backends.extend(installed_accelerator());
+    let mut cpu_seconds = 0.0;
+    for backend in backends {
+        let start = std::time::Instant::now();
+        let engine = runtime::Engine::with_path(backend_path(backend));
+        let executable = engine.prepare(&module);
+        let compiled = start.elapsed();
+        let results = engine.run(&executable, Vec::new());
+        let start = std::time::Instant::now();
+        engine.run(&executable, Vec::new());
+        let ran = start.elapsed().as_secs_f64();
+        let before = results[0].f64_vec()[0];
+        let after = results[1].f64_vec()[0];
+        if !after.is_finite() || after >= before {
+            die(&format!("{}: training failed (loss {} -> {})", backend, before, after));
+        }
+        let speedup = if backend == "cpu" {
+            cpu_seconds = ran;
+            String::new()
+        } else {
+            format!(", {:.1}x the cpu", cpu_seconds / ran)
+        };
+        println!(
+            "{}: ok — loss {:.4} -> {:.4} (compiled in {:.2}s, trained in {:.2}s{})",
+            backend, before, after, compiled.as_secs_f64(), ran, speedup
+        );
+    }
+    if installed_accelerator().is_none() {
+        println!("no accelerator installed; tested the cpu only");
+    }
+}
+
 fn play_audio(path: &str) {
     let player = if cfg!(target_os = "macos") { "afplay" } else { "aplay" };
     Command::new(player)
@@ -311,8 +377,29 @@ fn report_default() {
         let missing = runtime::missing_libs(&backend_path(b));
         if !missing.is_empty() {
             println!("warning: {} won't load until its libraries are installed:{}", b, missing);
+        } else if b == "cuda" && !libdevice_present() {
+            println!("warning: xla also needs libdevice (part of nvcc) to compile for the gpu; {}", runtime::CUDA_RECIPE);
         }
     }
+}
+
+fn libdevice_present() -> bool {
+    if env::var("XLA_FLAGS").map(|f| f.contains("xla_gpu_cuda_data_dir")).unwrap_or(false) {
+        return true;
+    }
+    let mut roots = vec![
+        "/usr/local/cuda".to_string(),
+        "/opt/cuda".to_string(),
+        format!("{}/.vector/cuda", home()),
+    ];
+    if let Ok(entries) = fs::read_dir("/usr/local") {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with("cuda-") {
+                roots.push(entry.path().to_string_lossy().into_owned());
+            }
+        }
+    }
+    roots.iter().any(|r| fs::metadata(format!("{}/nvvm/libdevice/libdevice.10.bc", r)).is_ok())
 }
 
 fn setup(backend: &str) {
@@ -407,6 +494,7 @@ fn main() {
                 setup(&args[2]);
                 report_default();
             }
+            Some("test") if args.len() == 2 => self_test(),
             Some("serve") if args.len() == 3 => serve::serve(&args[2], 8080),
             Some("serve") if args.len() == 4 => {
                 let port = args[3].parse()

@@ -79,7 +79,10 @@ impl Drop for Engine {
 
 impl Engine {
     pub fn new() -> Engine {
-        let plugin_path = plugin_path();
+        Engine::with_path(plugin_path())
+    }
+
+    pub fn with_path(plugin_path: String) -> Engine {
         let muffle = Muffle::engage();
         let api = pjrt::plugin(&plugin_path).load();
         let client = api.as_ref().ok().map(|api| Client::builder(api).build());
@@ -146,6 +149,11 @@ impl Engine {
     }
 }
 
+pub const CUDA_RECIPE: &str = "install and expose them with:
+  sudo apt install -y cuda-libraries-13-1 cuda-cupti-13-1 libcudnn9-cuda-13 cuda-nvcc-13-1
+  export LD_LIBRARY_PATH=/usr/local/cuda-13.1/lib64:/usr/local/cuda-13.1/extras/CUPTI/lib64
+  export XLA_FLAGS=--xla_gpu_cuda_data_dir=/usr/local/cuda-13.1";
+
 pub fn missing_libs(plugin_path: &str) -> String {
     if !cfg!(target_os = "linux") {
         return String::new();
@@ -161,10 +169,12 @@ pub fn missing_libs(plugin_path: &str) -> String {
     if missing.is_empty() {
         return String::new();
     }
-    format!(
-        "\nmissing libraries: {}\ninstall them (for cuda: CUDA runtime + cuDNN 9) and make them visible with LD_LIBRARY_PATH",
-        missing.join(", ")
-    )
+    let hint = if plugin_path.contains("cuda") {
+        CUDA_RECIPE
+    } else {
+        "install them and make them visible with LD_LIBRARY_PATH"
+    };
+    format!("\nmissing libraries: {}\n{}", missing.join(", "), hint)
 }
 
 pub fn fnv64(bytes: &[u8]) -> u64 {

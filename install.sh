@@ -34,6 +34,10 @@ if ! command -v cargo >/dev/null; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 fi
 PATH="$HOME/.cargo/bin:$PATH"
+if [ ! -f "$HOME/.cargo/env" ]; then
+    mkdir -p "$HOME/.cargo"
+    printf 'export PATH="$HOME/.cargo/bin:$PATH"\n' > "$HOME/.cargo/env"
+fi
 
 if [ -d "$HOME/vector/.git" ]; then
     git -C "$HOME/vector" pull
