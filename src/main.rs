@@ -44,7 +44,9 @@ const USAGE: &str = "usage: vector [file.vec]
   vector setup                  detect this machine and install the right backends
   vector version                print version
 
-  --accelerate                  run on the machine's accelerator (gpu/tpu); programs run on the cpu by default";
+  --accelerate                  run on the machine's accelerator (gpu/tpu); programs run on the cpu by default
+
+  set VECTOR_LOGS=1 to see the XLA runtime logs vector hides by default";
 
 struct VectorError(String);
 
@@ -389,6 +391,9 @@ fn setup(backend: &str) {
 
 fn main() {
     install_panic_hook();
+    if env::var_os("VECTOR_LOGS").is_none() && env::var_os("TF_CPP_MIN_LOG_LEVEL").is_none() {
+        unsafe { env::set_var("TF_CPP_MIN_LOG_LEVEL", "2") };
+    }
     let mut args: Vec<String> = env::args().collect();
     let accelerate = args.iter().any(|a| a == "--accelerate");
     args.retain(|a| a != "--accelerate");
@@ -415,6 +420,7 @@ fn main() {
             _ => die(USAGE),
         }
     });
+    std::mem::forget(runtime::exit_muffle());
     if outcome.is_err() {
         exit(1);
     }

@@ -7,57 +7,137 @@ use crate::graph::Dtype;
 use crate::npy::{input_host_buffer, InputSpec};
 use crate::{die, home, plugin_path};
 
+unsafe extern "C" {
+    fn open(path: *const u8, flags: i32) -> i32;
+    fn dup(fd: i32) -> i32;
+    fn dup2(from: i32, to: i32) -> i32;
+    fn close(fd: i32) -> i32;
+}
+
+pub struct Muffle {
+    out: i32,
+    err: i32,
+}
+
+impl Muffle {
+    fn engage() -> Option<Muffle> {
+        if std::env::var_os("VECTOR_LOGS").is_some() {
+            return None;
+        }
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        unsafe {
+            let devnull = open(c"/dev/null".as_ptr() as *const u8, 1);
+            if devnull < 0 {
+                return None;
+            }
+            let out = dup(1);
+            let err = dup(2);
+            dup2(devnull, 1);
+            dup2(devnull, 2);
+            close(devnull);
+            Some(Muffle { out, err })
+        }
+    }
+}
+
+impl Drop for Muffle {
+    fn drop(&mut self) {
+        unsafe {
+            dup2(self.out, 1);
+            dup2(self.err, 2);
+            close(self.out);
+            close(self.err);
+        }
+    }
+}
+
+pub fn exit_muffle() -> Option<Muffle> {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    Muffle::engage()
+}
+
 pub struct Engine {
     plugin_path: String,
-    api: pjrt::Api,
-    client: Client,
+    api: std::mem::ManuallyDrop<pjrt::Api>,
+    client: std::mem::ManuallyDrop<Client>,
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        let muffle = Muffle::engage();
+        unsafe {
+            std::mem::ManuallyDrop::drop(&mut self.client);
+            std::mem::ManuallyDrop::drop(&mut self.api);
+        }
+        drop(muffle);
+    }
 }
 
 impl Engine {
     pub fn new() -> Engine {
         let plugin_path = plugin_path();
-        let api = pjrt::plugin(&plugin_path)
-            .load()
+        let muffle = Muffle::engage();
+        let api = pjrt::plugin(&plugin_path).load();
+        let client = api.as_ref().ok().map(|api| Client::builder(api).build());
+        drop(muffle);
+        let api = api
             .unwrap_or_else(|e| die(&format!("cannot load PJRT plugin at {}: {}{}", plugin_path, e, missing_libs(&plugin_path))));
-        let client = Client::builder(&api)
-            .build()
+        let client = client.unwrap()
             .unwrap_or_else(|e| die(&format!("cannot create PJRT client: {}", e)));
-        Engine { plugin_path, api, client }
+        Engine {
+            plugin_path,
+            api: std::mem::ManuallyDrop::new(api),
+            client: std::mem::ManuallyDrop::new(client),
+        }
     }
 
     pub fn prepare(&self, mlir: &str) -> LoadedExecutable {
         let flags = std::env::var("XLA_FLAGS").unwrap_or_default();
         let keyed = format!("{}\n{:?}\n{}\n{}", self.plugin_path, self.api.version(), flags, mlir);
-        load_cached(&self.client, &keyed).unwrap_or_else(|| {
-            let program = pjrt::Program::new(MLIR, mlir.as_bytes());
-            let executable = LoadedExecutable::builder(&self.client, &program)
-                .build()
-                .unwrap_or_else(|e| die(&format!("XLA compilation failed: {}", e)));
-            store_cache(&executable, &keyed);
-            executable
-        })
+        let muffle = Muffle::engage();
+        let executable = match load_cached(&self.client, &keyed) {
+            Some(executable) => Ok(executable),
+            None => {
+                let program = pjrt::Program::new(MLIR, mlir.as_bytes());
+                let built = LoadedExecutable::builder(&*self.client, &program).build();
+                if let Ok(executable) = &built {
+                    store_cache(executable, &keyed);
+                }
+                built
+            }
+        };
+        drop(muffle);
+        executable.unwrap_or_else(|e| die(&format!("XLA compilation failed: {}", e)))
     }
 
     pub fn run(&self, executable: &LoadedExecutable, feeds: Vec<HostBuffer>) -> Vec<Tensor> {
-        let buffers: Vec<Buffer> = feeds.into_iter()
-            .map(|feed| {
-                feed.to_sync(&self.client)
+        let muffle = Muffle::engage();
+        let outcome = (|| -> Result<Vec<Tensor>, String> {
+            let mut buffers: Vec<Buffer> = Vec::new();
+            for feed in feeds {
+                let buffer = feed.to_sync(&*self.client)
                     .copy()
-                    .unwrap_or_else(|e| die(&format!("cannot transfer input to device: {}", e)))
-            })
-            .collect();
-        let results = executable
-            .execution(buffers)
-            .run_sync()
-            .unwrap_or_else(|e| die(&format!("execution failed: {}", e)));
-        results[0]
-            .iter()
-            .map(|b| {
+                    .map_err(|e| format!("cannot transfer input to device: {}", e))?;
+                buffers.push(buffer);
+            }
+            let results = executable
+                .execution(buffers)
+                .run_sync()
+                .map_err(|e| format!("execution failed: {}", e))?;
+            let mut out = Vec::new();
+            for b in results[0].iter() {
                 let h = b.to_host_sync(None)
-                    .unwrap_or_else(|e| die(&format!("device-to-host transfer failed: {}", e)));
-                host_tensor(h)
-            })
-            .collect()
+                    .map_err(|e| format!("device-to-host transfer failed: {}", e))?;
+                out.push(host_tensor(h));
+            }
+            Ok(out)
+        })();
+        drop(muffle);
+        outcome.unwrap_or_else(|e| die(&e))
     }
 
     pub fn execute(&self, mlir: &str, feeds: Vec<HostBuffer>) -> Vec<Tensor> {
