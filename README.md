@@ -182,7 +182,6 @@ vector filename.vec --accelerate
 | September 2026 | Large-scale distributed ML     | Integrate into enterprises                  |
 | October 2026   | Vector libraries               | Ecosystem partnerships                      |
 | November 2026  | **Release v1**                 | Workshops & developer events                |
-| December 2026  | Self-host & broaden            |                                             |
 
 ## Contributing
 
