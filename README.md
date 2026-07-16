@@ -164,13 +164,13 @@ vector filename.vec --accelerate
 
 ## Roadmap
 
-| When           | Focus                          | Goal                                        |
-| -------------- | ------------------------------ | ------------------------------------------- |
-| July 2026      | Parity with Python libs        | Integrate into XLA/Python/ML ecosystem      |
-| August 2026    | Vector notebooks               | Integrate into academic curriculums         |
-| September 2026 | Large-scale distributed ML     | Integrate into enterprises                  |
-| October 2026   | Vector libraries               | Ecosystem partnerships                      |
-| November 2026  | **Release v1**                 | Workshops & developer events                |
+| When           | Goal                           |
+| -------------- | ------------------------------ |
+| July 2026      | Finish syntax and behaviour    |
+| August 2026    | Parity with Python ML libs     |
+| September 2026 | Large-scale distributed ML     |
+| October 2026   | Vector libraries               |
+| November 2026  | **Release v1**                 |
 
 ## Contributing
 
