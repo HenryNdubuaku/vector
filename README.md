@@ -6,7 +6,7 @@ A programming language for machine learning, compiled to CPUs, GPUs and TPUs thr
 
 ML in Python relies on special libraries with C/C++ backend; PyTorch, NumPy, JAX, Pandas. JAX is particularly fast, thanks to the XLA compiler which compiles for CPU, TPUs/Nvidia GPUs, AMD GPUs, Apple GPUs, etc. 
 
-Vector brings JAX-level speed across the entire program with Pythonic-syntax and functional paradigm, your entire code can run on these accelerators, not just the training loop. 
+Vector brings JAX-level speed across the entire program with Pythonic-syntax and functional paradigm, your entire code can run on accelerators, not just the training loop. 
 
 ## A full programming language with JAX-level speed
 
