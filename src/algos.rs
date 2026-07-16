@@ -98,10 +98,24 @@ impl Tracer {
         if xper.is_empty() || xper.len() > 2 {
             die(&format!("take expects rank 1 or 2, got shape {:?}", xper));
         }
-        let TVal::Tensor(oh) = self.one_hot_val(idx, xper[0]) else { unreachable!() };
-        let ohv = self.convert(&oh.val, x.val.dtype);
-        let oh = BVal { val: ohv, bdims: oh.bdims };
-        TVal::Tensor(self.bmatmul(oh, x))
+        if x.bdims > 0 || idx.bdims > 0 {
+            let TVal::Tensor(oh) = self.one_hot_val(idx, xper[0]) else { unreachable!() };
+            let ohv = self.convert(&oh.val, x.val.dtype);
+            let oh = BVal { val: ohv, bdims: oh.bdims };
+            return TVal::Tensor(self.bmatmul(oh, x));
+        }
+        let iper = per_shape(&idx);
+        if iper.len() > 1 {
+            die(&format!("take indices must be a scalar or vector, got shape {:?}", iper));
+        }
+        let scalar = iper.is_empty();
+        let iv = if scalar { self.reshape(&idx.val, vec![1]) } else { idx.val.clone() };
+        let iv = self.convert(&iv, Dtype::I64);
+        let mut shape = vec![iv.shape[0]];
+        shape.extend(&x.val.shape[1..]);
+        let val = self.emit(OpKind::Gather, vec![x.val.id, iv.id], shape, x.val.dtype);
+        let val = if scalar { self.reshape(&val, x.val.shape[1..].to_vec()) } else { val };
+        TVal::Tensor(BVal { val, bdims: 0 })
     }
 
     pub fn cumsum_val(&mut self, v: BVal) -> TVal {

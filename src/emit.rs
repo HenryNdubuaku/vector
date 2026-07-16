@@ -59,6 +59,21 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
         OpKind::Barrier => unreachable!("barriers are name aliases"),
         OpKind::While { .. } => unreachable!("while is emitted by the region writer"),
         OpKind::Sort { .. } => unreachable!("sort is emitted by the region writer"),
+        OpKind::Scatter => unreachable!("scatter is emitted by the region writer"),
+        OpKind::Gather => {
+            let operand = &nodes[node.inputs[0]].shape;
+            let offsets = if operand.len() > 1 {
+                format!("offset_dims = [{}], ", join(&(1..operand.len()).collect::<Vec<_>>()))
+            } else {
+                String::new()
+            };
+            let mut sizes = vec![1];
+            sizes.extend(&operand[1..]);
+            format!(
+                "\"stablehlo.gather\"({}, {}) {{dimension_numbers = #stablehlo.gather<{}collapsed_slice_dims = [0], start_index_map = [0], index_vector_dim = 1>, indices_are_sorted = false, slice_sizes = array<i64: {}>}} : ({}, {}) -> {}",
+                arg(0), arg(1), offsets, join(&sizes), t(0), t(1), out
+            )
+        }
         OpKind::Iota => format!("stablehlo.iota dim = 0 : {}", out),
         OpKind::Constant(n) => {
             let lit = match node.dtype {
@@ -199,12 +214,36 @@ fn write_sort(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
     ));
 }
 
+fn write_scatter(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
+    let ind = " ".repeat(indent);
+    let node = &nodes[id];
+    let args: Vec<String> = node.inputs.iter().map(|&i| val_name(i, nodes)).collect();
+    let types: Vec<String> = node.inputs.iter()
+        .map(|&i| tensor_type(&nodes[i].shape, nodes[i].dtype))
+        .collect();
+    let scalar = tensor_type(&[], node.dtype);
+    let windows = if node.shape.len() > 1 {
+        format!("update_window_dims = [{}], ", join(&(1..node.shape.len()).collect::<Vec<_>>()))
+    } else {
+        String::new()
+    };
+    s.push_str(&format!("{}%{} = \"stablehlo.scatter\"({}) ({{\n", ind, id, args.join(", ")));
+    s.push_str(&format!("{}^bb0(%u{}_0: {}, %u{}_1: {}):\n", ind, id, scalar, id, scalar));
+    s.push_str(&format!("{}  %a{} = stablehlo.add %u{}_0, %u{}_1 : {}\n", ind, id, id, id, scalar));
+    s.push_str(&format!("{}  stablehlo.return %a{} : {}\n", ind, id, scalar));
+    s.push_str(&format!(
+        "{}}}) {{indices_are_sorted = false, scatter_dimension_numbers = #stablehlo.scatter<{}inserted_window_dims = [0], scatter_dims_to_operand_dims = [0], index_vector_dim = 1>, unique_indices = false}} : ({}) -> {}\n",
+        ind, windows, types.join(", "), tensor_type(&node.shape, node.dtype)
+    ));
+}
+
 fn write_region(s: &mut String, ids: &[usize], nodes: &[Node], indent: usize) {
     for &id in ids {
         match &nodes[id].kind {
             OpKind::Input | OpKind::IterArg | OpKind::Proj(_) | OpKind::Barrier => {}
             OpKind::While { .. } => write_while(s, id, nodes, indent),
             OpKind::Sort { .. } => write_sort(s, id, nodes, indent),
+            OpKind::Scatter => write_scatter(s, id, nodes, indent),
             _ => {
                 s.push_str(&" ".repeat(indent));
                 s.push_str(&format!("%{} = {}\n", id, node_text(&nodes[id], nodes)));

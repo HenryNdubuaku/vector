@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::die;
-use crate::graph::{OpKind, Val};
+use crate::graph::{Dtype, OpKind, Val};
 use crate::trace::Tracer;
 
 impl Tracer {
@@ -36,7 +36,26 @@ impl Tracer {
             OpKind::While { .. } | OpKind::Proj(_) => {
                 die("differentiating across a for loop isn't supported; take gradients inside the loop body")
             }
-            OpKind::Sort { .. } => die("differentiating through sort isn't supported yet"),
+            OpKind::Sort { axis, num } => {
+                if *num != 1 || *axis != 0 || ins[0].shape.len() != 1 {
+                    die("differentiating through sort isn't supported yet");
+                }
+                let n = ins[0].shape[0];
+                let iota = self.emit(OpKind::Iota, vec![], vec![n], Dtype::F32);
+                let s1 = self.emit(OpKind::Sort { axis: 0, num: 2 }, vec![ins[0].id, iota.id], vec![n], ins[0].dtype);
+                let perm = self.emit(OpKind::Proj(1), vec![s1.id], vec![n], Dtype::F32);
+                let s2 = self.emit(OpKind::Sort { axis: 0, num: 2 }, vec![perm.id, iota.id], vec![n], Dtype::F32);
+                let inv = self.emit(OpKind::Proj(1), vec![s2.id], vec![n], Dtype::F32);
+                let idx = self.convert(&inv, Dtype::I64);
+                let dx = self.emit(OpKind::Gather, vec![g.id, idx.id], vec![n], g.dtype);
+                vec![(ins[0].id, dx)]
+            }
+            OpKind::Gather => {
+                let zeros = self.zeros_like(&ins[0]);
+                let dx = self.emit(OpKind::Scatter, vec![zeros.id, ins[1].id, g.id], ins[0].shape.clone(), ins[0].dtype);
+                vec![(ins[0].id, dx)]
+            }
+            OpKind::Scatter => die("differentiating through scatter isn't supported yet"),
             OpKind::DynSlice(_) => {
                 let zeros = self.zeros_like(&ins[0]);
                 let mut inputs = vec![zeros.id, g.id];

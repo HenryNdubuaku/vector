@@ -38,8 +38,8 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 - `zeros(dims...)`, `randn(dims...)`
 - `reshape(x, dims...)` — dims are compile-time literals
 - `slice(x, start, size)` — axis 0; `start` may be a runtime scalar, `size` is static
-- `take(values, indices)` — fancy indexing as a one-hot matmul; differentiable
-- `sort(x)`, `argsort(x)` — vectors; batch with `vmap`
+- `take(values, indices)` — fancy indexing along axis 0 (embedding lookups scale to any vocab); differentiable, duplicate indices accumulate gradient, out-of-range indices clamp
+- `sort(x)`, `argsort(x)` — vectors; batch with `vmap`; `sort` is differentiable
 - `argmax(x)`, `argmin(x)` — first index on ties
 - `cumsum(x)`
 - `one_hot(indices, depth)`

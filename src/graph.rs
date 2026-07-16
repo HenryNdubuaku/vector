@@ -91,6 +91,8 @@ pub enum OpKind {
     Compare(String),
     Select,
     Sort { axis: usize, num: usize },
+    Gather,
+    Scatter,
     Concat(usize),
     Slice(usize, usize, usize),
     DynSlice(Vec<usize>),
