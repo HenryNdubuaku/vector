@@ -23,7 +23,6 @@
 *.npy
 *.svg
 *.csv
-*.png
 *.wav
 !tests/fixtures/*
 tests/cases/data/

@@ -1,20 +1,31 @@
 # Vector
 
+<img src="assets/banner.png" alt="Logo" style="border-radius: 30px; width: 100%;">
+
 A programming language for machine learning, compiled to CPUs, GPUs and TPUs through [XLA](https://openxla.org/xla).
 
-Why Vector exists:
+ML in Python relies on special libraries with C/C++ backend; PyTorch, NumPy, JAX, Pandas. JAX is particularly fast, thanks to the XLA compiler which compiles for CPU, TPUs/Nvidia GPUs, AMD GPUs, Apple GPUs, etc. 
 
-- **Python** interprets your program and hands fragments to compiled libraries (PyTorch/JAX), in Vector the whole program is the graph: `grad`, `vmap` and modules are language features.
-- **Dex** proved differentiable array programming in research. Vector packs data, plots, images, audio, checkpoints and serving in one binary that speaks the ecosystem's formats.
-- **Bend** built a novel GPU runtime. Vector bets on XLA, the compiler that already runs the world's ML, on every backend it supports.
-- **Mojo** is a Python superset carrying all of Python's surface area. Vector is small on purpose: learnable in an afternoon.
+Vector brings JAX-level speed across the entire program with Pythonic-syntax and functional paradigm, your entire code can run on these accelerators, not just the training loop. 
+
+## A full programming language with JAX-level speed
+
+- 200 full-batch gradient-descent steps of a 1→1024→1024→1 tanh network on 2048 points of sin(x), f32. 
+- JAX runs a jitted `fori_loop`; PyTorch runs both its standard eager loop and a `torch.compile`d step. 
+- Timings are the median of 5 runs after one warm-up, excluding compilation. 
+
+| Device                    | Vector    | JAX        | PyTorch (eager) | PyTorch (compiled) |
+| ------------------------- | --------- | ---------- | --------------- | ------------------ |
+| Apple M5 Max CPU (ARM)    | **1.51s** | 1.62s      | 2.11s           | 2.15s              |
+| Apple M5 Max GPU (Metal)  | **0.27s** | —          | 0.32s           | 0.30s              |
+| GPU-box CPU (x86)         | 7.60s     | **6.90s**  | 13.50s          | 14.81s             |
+| NVIDIA RTX 4000 Ada       | **0.09s** | **0.09s**  | 0.29s           | 0.25s              |
+| TPU-VM CPU (x86)          | **1.70s** | 3.46s      | —               | —                  |
+| Google TPU                | **0.01s** | **0.01s**  | —               | —                  |
 
 ## Overview
 
-The tour below is one program: train a network to fit sin(x), then save, plot, export and serve it. Paste the cells into one file, in order.
-
-Vector's functions are numpy-like, and math is elementwise over any shape — `sin` of a matrix is the matrix of sines. 
-Each row of `batches_x` is one batch of 32; the transpose interleaves the sorted samples so every batch spans the domain:
+The tour below is one program: train a network to fit sin(x):
 
 ```python
 n = 16000
@@ -32,7 +43,7 @@ batches_x = transpose(reshape(xs, batch_size, batches))
 batches_t = sin(batches_x)
 ```
 
-Vector is functional like JAX, but with modules. A module packs weights and methods; an instance is a value — training never mutates it, it builds an updated one:
+Vector modules are analogous to PyTorch nn.Module:
 
 ```python
 module Mlp(hidden):
@@ -49,8 +60,7 @@ module Mlp(hidden):
 model = Mlp(hidden_size)
 ```
 
-Training is whole-model arithmetic: `grad` returns a gradient shaped like the model, so one subtraction updates every weight. 
-`take` picks one batch, the loop compiles to a single XLA op, and `print` logs each epoch:
+Training is whole-model arithmetic and the loop compiles to a single XLA op:
 
 ```python
 fn train_epoch(model, bx, bt, lr, batch, batches):
@@ -66,7 +76,7 @@ for epoch in 0..epochs:
   print(model.loss(inputs, targets))
 ```
 
-Weights save as safetensors, tensors as numpy `.npy` — Python reads both, and PyTorch checkpoints load back:
+Weights save as safetensors, tensors as numpy `.npy`:
 
 ```python
 save(model, "mlp.safetensors")
@@ -79,6 +89,18 @@ print(eval_targets)
 
 save(model(eval_inputs), "predictions.npy")
 print(load("predictions.npy") - eval_targets)
+```
+
+The trained forward pass exports as [StableHLO](https://openxla.org/stablehlo):
+
+```python
+export(model, "mlp.mlir", eval_inputs)
+```
+
+You can serve the exported model over http:
+```sh
+vector serve mlp.mlir 8080
+curl -d '{"inputs": [[[-3.14], [-2.36], [-1.57], [-0.79], [0.0], [0.79], [1.57], [2.36], [3.14]]]}' http://127.0.0.1:8080/
 ```
 
 A table is a record of columns, saved and loaded as `.csv`, like pandas:
@@ -98,7 +120,7 @@ title("sin approximation")
 savefig("sin.svg")
 ```
 
-An image is a tensor of pixels in 0..1 — load, resize, crop, save `.png`, show:
+Image processing capabilites are natively shipped:
 
 ```python
 grid = sin(linspace(-pi, pi, 64))
@@ -109,27 +131,11 @@ title("sin(x) * sin(y)")
 savefig("surface.svg")
 ```
 
-Audio is a record `{samples, rate}` — here half a second of A4, saved as `.wav`:
+Audio is a record `{samples, rate}`:
 
 ```python
 tone = sin(linspace(0.0, 1382.3, 4000))
 save({samples: tone * 0.5, rate: 8000.0}, "tone.wav")
-```
-
-One line exports the trained forward pass as [StableHLO](https://openxla.org/stablehlo), the portable graph format that JAX, IREE and every XLA runtime consume:
-
-```python
-export(model, "mlp.mlir", eval_inputs)
-```
-
-Serve the exported model over http:
-```sh
-vector serve mlp.mlir 8080
-```
-
-Query it:
-```sh
-curl -d '{"inputs": [[[-3.14], [-2.36], [-1.57], [-0.79], [0.0], [0.79], [1.57], [2.36], [3.14]]]}' http://127.0.0.1:8080/
 ```
 
 ## Get Started
@@ -155,23 +161,6 @@ vector filename.vec --accelerate
 ```
 
 **4. Read more**: [docs/reference.md](docs/reference.md) covers the whole language; [example project](example/) is a simple ML project.
-
-## A full programming language with JAX-level speed
-
-- 200 full-batch gradient-descent steps of a 1→1024→1024→1 tanh network on 2048 points of sin(x), f32. 
-- Full-batch steps minimize Python dispatch overhead, which is generous to eager PyTorch. 
-- Every framework starts from identical weights; the script verifies all frameworks compute the same losses (0.3586 → 0.0133, within 0.001 — TPUs round f32 matmuls through bf16) and prints the verdict. 
-- JAX runs a jitted `fori_loop`; PyTorch runs both its standard eager loop and a `torch.compile`d step. 
-- Timings are the median of 5 runs after one warm-up, excluding compilation; the script prints all framework versions and GPU info. 
-
-| Device                    | Vector    | JAX        | PyTorch (eager) | PyTorch (compiled) |
-| ------------------------- | --------- | ---------- | --------------- | ------------------ |
-| Apple M5 Max CPU          | **1.51s** | 1.62s      | 2.11s           | 2.15s              |
-| Apple M5 Max GPU (Metal)  | **0.27s** | —          | 0.32s           | 0.30s              |
-| GPU-box CPU (x86)         | 7.60s     | **6.90s**  | 13.50s          | 14.81s             |
-| NVIDIA RTX 4000 Ada       | **0.09s** | **0.09s**  | 0.29s           | 0.25s              |
-| TPU-VM CPU (x86)          | **1.70s** | 3.46s      | —               | —                  |
-| Google TPU                | **0.01s** | **0.01s**  | —               | —                  |
 
 ## Roadmap
 
