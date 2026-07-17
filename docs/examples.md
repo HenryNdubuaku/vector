@@ -738,6 +738,10 @@ for i in 0..8:
   prev = u2 * 1.0
 print(repeats)
 
+p = permutation(64)
+print(sum(where(sort(p) == arange(64), 1.0, 0.0)))
+print(where(sum(where(p == arange(64), 1.0, 0.0)) < 64.0, 1.0, 0.0))
+
 fn dloss(w):
   mean(dropout(w, 0.25) * w)
 
@@ -753,6 +757,8 @@ Output:
 1 : f32
 1 : f32
 0 : f32
+64 : f32
+1 : f32
 1 : f32
 ```
 

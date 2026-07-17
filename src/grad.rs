@@ -32,8 +32,7 @@ impl Tracer {
         let out = self.val(id);
         let ins: Vec<Val> = node.inputs.iter().map(|&i| self.val(i)).collect();
         match &node.kind {
-            OpKind::Input | OpKind::Iota | OpKind::IterArg | OpKind::Constant(_) | OpKind::DenseConst(_) | OpKind::Compare(_) | OpKind::RngBits => vec![],
-            OpKind::Proj(_) if matches!(self.nodes[node.inputs[0]].kind, OpKind::RngBits) => vec![],
+            OpKind::Input | OpKind::Iota | OpKind::IterArg | OpKind::Constant(_) | OpKind::DenseConst(_) | OpKind::Compare(_) => vec![],
             OpKind::While { .. } | OpKind::Proj(_) => {
                 die("differentiating across a for loop isn't supported; take gradients inside the loop body")
             }
@@ -57,13 +56,6 @@ impl Tracer {
                 vec![(ins[0].id, dx)]
             }
             OpKind::Scatter => die("differentiating through scatter isn't supported yet"),
-            OpKind::DynSlice(_) => {
-                let zeros = self.zeros_like(&ins[0]);
-                let mut inputs = vec![zeros.id, g.id];
-                inputs.extend(node.inputs[1..].iter().copied());
-                let da = self.emit(OpKind::DynUpdateSlice, inputs, ins[0].shape.clone(), ins[0].dtype);
-                vec![(ins[0].id, da)]
-            }
             OpKind::DynUpdateSlice => {
                 die("differentiating through dynamic_update_slice isn't supported yet")
             }
@@ -126,7 +118,7 @@ impl Tracer {
                 vec![(ins[0].id, da)]
             }
             OpKind::Convert => match ins[0].dtype {
-                Dtype::I1 | Dtype::I32 | Dtype::I64 | Dtype::U32 | Dtype::U64 => vec![],
+                Dtype::I1 | Dtype::I32 | Dtype::I64 | Dtype::U32 => vec![],
                 _ => vec![(ins[0].id, self.convert(g, ins[0].dtype))],
             },
             OpKind::Broadcast(dims) => {

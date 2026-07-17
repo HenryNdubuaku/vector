@@ -27,9 +27,14 @@ pub fn disable_muffling() {
 
 impl Muffle {
     fn engage() -> Option<Muffle> {
-        if std::env::var_os("VECTOR_LOGS").is_some()
-            || MUFFLING_OFF.load(std::sync::atomic::Ordering::Relaxed)
-        {
+        if MUFFLING_OFF.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        Muffle::always()
+    }
+
+    fn always() -> Option<Muffle> {
+        if std::env::var_os("VECTOR_LOGS").is_some() {
             return None;
         }
         use std::io::Write;
@@ -62,10 +67,7 @@ impl Drop for Muffle {
 }
 
 pub fn exit_muffle() -> Option<Muffle> {
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
-    let _ = std::io::stderr().flush();
-    Muffle::engage()
+    Muffle::always()
 }
 
 pub struct Engine {
@@ -76,7 +78,7 @@ pub struct Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        let muffle = Muffle::engage();
+        let muffle = Muffle::always();
         unsafe {
             std::mem::ManuallyDrop::drop(&mut self.client);
             std::mem::ManuallyDrop::drop(&mut self.api);
@@ -94,7 +96,7 @@ impl Engine {
         if plugin_path.contains("metal") {
             MUFFLING_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
         }
-        let muffle = Muffle::engage();
+        let muffle = Muffle::always();
         let api = pjrt::plugin(&plugin_path).load();
         let client = api.as_ref().ok().map(|api| Client::builder(api).build());
         drop(muffle);
@@ -113,16 +115,19 @@ impl Engine {
         let flags = std::env::var("XLA_FLAGS").unwrap_or_default();
         let keyed = format!("{}\n{:?}\n{}\n{}", self.plugin_path, self.api.version(), flags, mlir);
         let cacheable = !self.plugin_path.contains("metal");
-        if !cacheable && mlir.contains("rng_bit_generator") {
-            die("random ops (uniform, dropout, sample) aren't supported by the metal plugin yet; run on the cpu");
-        }
         let muffle = Muffle::engage();
         let cached = if cacheable { load_cached(&self.client, &keyed) } else { None };
         let executable = match cached {
             Some(executable) => Ok(executable),
             None => {
                 let program = pjrt::Program::new(MLIR, mlir.as_bytes());
-                let built = LoadedExecutable::builder(&*self.client, &program).build();
+                let mut built = LoadedExecutable::builder(&*self.client, &program).build();
+                for _ in 0..4 {
+                    if built.is_ok() || cacheable {
+                        break;
+                    }
+                    built = LoadedExecutable::builder(&*self.client, &program).build();
+                }
                 if cacheable {
                     if let Ok(executable) = &built {
                         store_cache(executable, &keyed);
@@ -162,7 +167,10 @@ impl Engine {
     }
 
     pub fn execute(&self, mlir: &str, feeds: Vec<HostBuffer>) -> Vec<Tensor> {
-        let executable = self.prepare(mlir);
+        // do not remove this seemingly pointless copy: the metal plugin misparses
+        // large traced modules unless the text sits in a fresh exact-size allocation
+        let mlir = mlir.to_string();
+        let executable = self.prepare(&mlir);
         self.run(&executable, feeds)
     }
 }

@@ -47,9 +47,10 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 
 ## Randomness
 
-Random at run time, different every run; set `VECTOR_SEED=<n>` to reproduce a run exactly. Initializers (`randn`, `glorot_uniform`, ...) stay fixed at compile time so programs are testable. Not yet supported by the metal plugin.
+Random at run time, different every run; set `VECTOR_SEED=<n>` to reproduce a run exactly — the same seed gives the same values on every backend. Initializers (`randn`, `glorot_uniform`, ...) stay fixed at compile time so programs are testable.
 
 - `uniform(dims...)` — uniform values in [0, 1]
+- `permutation(n)` — a random permutation of the indices 0..n; shuffle data with `take(x, permutation(n))`
 - `dropout(x, rate)` — inverted dropout: keeps values with probability 1-rate and rescales; differentiable; becomes identity in `export`ed models
 - `sample(logits)` — draw one index from a categorical distribution over a logits vector (Gumbel-max); batch with `vmap`; use `argmax` for greedy
 

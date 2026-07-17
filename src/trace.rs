@@ -47,7 +47,7 @@ pub struct Tracer {
 
 impl Tracer {
     pub fn emit(&mut self, kind: OpKind, inputs: Vec<usize>, shape: Vec<usize>, dtype: Dtype) -> Val {
-        let internable = !matches!(kind, OpKind::Input | OpKind::IterArg | OpKind::Proj(_) | OpKind::Barrier | OpKind::While { .. } | OpKind::Sort { .. } | OpKind::RngBits);
+        let internable = !matches!(kind, OpKind::Input | OpKind::IterArg | OpKind::Proj(_) | OpKind::Barrier | OpKind::While { .. } | OpKind::Sort { .. });
         if internable {
             let key = format!("{:?}|{:?}|{:?}|{:?}", kind, inputs, shape, dtype);
             for frame in self.interned.iter().rev() {
@@ -540,31 +540,53 @@ impl Tracer {
         seed
     }
 
+    fn rotl(&mut self, x: Val, r: u32) -> Val {
+        let rl = self.constant(r as f64, Dtype::U32);
+        let rr = self.constant((32 - r) as f64, Dtype::U32);
+        let hi = self.ewise("shift_left", x.clone(), rl);
+        let lo = self.ewise("shift_right_logical", x, rr);
+        self.ewise("or", hi, lo)
+    }
+
     pub fn rng_uniform(&mut self, shape: &[usize]) -> Val {
         let seed = self.seed_val();
         self.rng_sites += 1;
-        let site = self.constant(self.rng_sites as f64, Dtype::I64);
-        let seed_i = self.convert(&seed, Dtype::I64);
-        let s0 = self.ewise("add", seed_i, site);
+        let n = shape.iter().product::<usize>().max(1);
+        let k0 = self.convert(&seed, Dtype::U32);
+        let k1 = self.constant(self.rng_sites as f64, Dtype::U32);
+        let keyed = self.ewise("xor", k0.clone(), k1.clone());
+        let magic = self.constant(0x1BD11BDAu32 as f64, Dtype::U32);
+        let ks2 = self.ewise("xor", keyed, magic);
+        let ks = [k0, k1, ks2];
         let mut ctr = self.constant(0.0, Dtype::I64);
         for (counter, trips) in self.loop_counters.clone() {
             let radix = self.constant(trips as f64, Dtype::I64);
             let scaled = self.ewise("multiply", ctr, radix);
             ctr = self.ewise("add", scaled, counter);
         }
-        let s0 = self.convert(&s0, Dtype::U64);
-        let s1 = self.convert(&ctr, Dtype::U64);
-        let s0 = self.reshape(&s0, vec![1]);
-        let s1 = self.reshape(&s1, vec![1]);
-        let state = self.emit(OpKind::Concat(0), vec![s0.id, s1.id], vec![2], Dtype::U64);
-        let bits_shape = if shape.is_empty() { vec![1] } else { shape.to_vec() };
-        let rng = self.emit(OpKind::RngBits, vec![state.id], bits_shape.clone(), Dtype::I32);
-        let bits = self.emit(OpKind::Proj(1), vec![rng.id], bits_shape.clone(), Dtype::I32);
-        let f = self.convert(&bits, Dtype::F32);
+        let iota = self.emit(OpKind::Iota, vec![], vec![n], Dtype::I32);
+        let flat = self.convert(&iota, Dtype::U32);
+        let fold = self.convert(&ctr, Dtype::U32);
+        let mut x0 = self.ewise("add", flat, ks[0].clone());
+        let folded = self.ewise("add", fold, ks[1].clone());
+        let mut x1 = self.broadcast(&folded, &[n]);
+        let rotations = [[13, 15, 26, 6], [17, 29, 16, 24]];
+        for i in 0..5 {
+            for &r in &rotations[i % 2] {
+                x0 = self.ewise("add", x0, x1.clone());
+                x1 = self.rotl(x1, r);
+                x1 = self.ewise("xor", x1, x0.clone());
+            }
+            x0 = self.ewise("add", x0, ks[(i + 1) % 3].clone());
+            let injected = self.ewise("add", x1, ks[(i + 2) % 3].clone());
+            let round = self.constant((i + 1) as f64, Dtype::U32);
+            x1 = self.ewise("add", injected, round);
+        }
+        let f = self.convert(&x0, Dtype::F32);
         let scale = self.constant(1.0 / 4294967296.0, Dtype::F32);
         let scaled = self.ewise("multiply", f, scale);
         let whole = self.unary("floor", &scaled);
         let u = self.ewise("subtract", scaled, whole);
-        if shape.is_empty() { self.reshape(&u, vec![]) } else { u }
+        if u.shape == shape { u } else { self.reshape(&u, shape.to_vec()) }
     }
 }

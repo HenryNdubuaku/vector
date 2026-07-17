@@ -166,14 +166,12 @@ impl Tracer {
                     die(&format!("slice size {} out of range for leading dim {}", size, x.val.shape[0]));
                 }
                 let idx = self.convert(&start.val, Dtype::I64);
-                let mut inputs = vec![x.val.id, idx.id];
-                for _ in 1..x.val.shape.len() {
-                    inputs.push(self.constant(0.0, Dtype::I64).id);
-                }
-                let mut sizes = vec![size];
-                sizes.extend(&x.val.shape[1..]);
-                let shape = sizes.clone();
-                let val = self.emit(OpKind::DynSlice(sizes), inputs, shape, x.val.dtype);
+                let iota = self.emit(OpKind::Iota, vec![], vec![size], Dtype::I32);
+                let offsets = self.convert(&iota, Dtype::I64);
+                let indices = self.ewise("add", offsets, idx);
+                let mut shape = vec![size];
+                shape.extend(&x.val.shape[1..]);
+                let val = self.emit(OpKind::Gather, vec![x.val.id, indices.id], shape.clone(), x.val.dtype);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
             "exp" | "log" | "tanh" | "sqrt" | "sin" | "cos" | "floor" => {
