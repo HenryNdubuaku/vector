@@ -8,8 +8,6 @@ ML in Python relies on special libraries with C/C++ backend; PyTorch, NumPy, JAX
 
 Vector brings JAX-level speed across the entire program with Pythonic-syntax and functional paradigm, your entire code can run on accelerators, not just the training loop. 
 
-## A full programming language with JAX-level speed
-
 - 200 full-batch gradient-descent steps of a 1→1024→1024→1 tanh network on 2048 points of sin(x), f32. 
 - JAX runs a jitted `fori_loop`; PyTorch runs both its standard eager loop and a `torch.compile`d step. 
 - Timings are the median of 5 runs after one warm-up, excluding compilation. 
@@ -35,12 +33,8 @@ epochs = 30
 batch_size = 32
 batches = 500
 
-xs = linspace(-pi, pi, n)
-inputs = reshape(xs, n, 1)
+inputs = reshape(linspace(-pi, pi, n), n, 1)
 targets = sin(inputs)
-
-batches_x = transpose(reshape(xs, batch_size, batches))
-batches_t = sin(batches_x)
 ```
 
 Vector modules are analogous to PyTorch nn.Module:
@@ -60,19 +54,23 @@ module Mlp(hidden):
 model = Mlp(hidden_size)
 ```
 
-Training is whole-model arithmetic and the loop compiles to a single XLA op:
+Training is whole-model arithmetic and the loop compiles to a single XLA op. 
+Each epoch shuffles and slices minibatches, like a DataLoader with `shuffle=True`:
 
 ```python
-fn train_epoch(model, bx, bt, lr, batch, batches):
+fn train_epoch(model, inputs, targets, lr, n, batch, batches):
   m = model
+  perm = permutation(n)
+  xs = take(inputs, perm)
+  ts = take(targets, perm)
   for step in 0..batches:
-    x = reshape(take(bx, step), batch, 1)
-    t = reshape(take(bt, step), batch, 1)
+    x = slice(xs, step * batch, batch)
+    t = slice(ts, step * batch, batch)
     m = m - lr * grad(m.loss, x, t)
   m
 
 for epoch in 0..epochs:
-  model = train_epoch(model, batches_x, batches_t, learning_rate, batch_size, batches)
+  model = train_epoch(model, inputs, targets, learning_rate, n, batch_size, batches)
   print(model.loss(inputs, targets))
 ```
 
