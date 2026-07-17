@@ -11,8 +11,8 @@ pub fn is_url(path: &str) -> bool {
 pub fn fetch(url: &str) -> String {
     let bare = url.split(['?', '#']).next().unwrap();
     let ext = bare.rsplit('/').next().unwrap().rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-    if !matches!(ext, "npy" | "csv" | "png" | "wav" | "safetensors" | "jpg" | "jpeg" | "mp3" | "flac" | "ogg") {
-        die(&format!("cannot tell the format of {}; the url must end in .npy, .csv, .png, .wav or .safetensors", url));
+    if !matches!(ext, "npy" | "csv" | "png" | "wav" | "safetensors" | "txt" | "json" | "jpg" | "jpeg" | "mp3" | "flac" | "ogg") {
+        die(&format!("cannot tell the format of {}; the url must end in .npy, .csv, .png, .wav, .txt, .json or .safetensors", url));
     }
     let dir = format!("{}/.vector/downloads", home());
     let path = format!("{}/{:016x}.{}", dir, fnv64(url.as_bytes()), ext);

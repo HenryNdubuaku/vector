@@ -19,9 +19,10 @@ Cheap language work that makes everything after it read naturally — worth land
 
 ## 3. The payoff demo: a small GPT in vector
 Byte-level Shakespeare in `example/` — the artifact that makes people install it, and the load test that flushes out remaining gaps.
-- [ ] Attention, layernorm, Adam written in vector source (softmax/mean/var/records already expressible) — promote the good ones to stdlib
-- [ ] Causal mask via `where` + iota comparisons
-- [ ] Train, sample, and print generated text end to end
+- [x] example/gpt.vec: 2-block multi-head transformer, layernorm, adam with bias correction, causal mask — all in vector source; trains to loss ~1.8 and samples structured pseudo-shakespeare in ~15s cpu / ~7s metal
+- [x] The load test worked: it flushed out and fixed — vmap record-passthrough + depth lifting (weights stay unmapped, `vmap(step, model, xb)`), negative literal indexing `x[-1]`, compile-time arithmetic on constants (`reshape(x, h * w)`), .txt/.json urls in load()
+- [x] tests/cases/attention.vec pins the transformer machinery deterministically (trace-time weights, grad flows, update decreases loss)
+- [ ] Promote to stdlib in item 4: layernorm, cross_entropy, adam, attention (the demo's lnr/xent/train_chunk/attend are the drafts)
 
 ## 4. NN training stdlib
 What a torch/jax user reaches for daily, written in vector source (records already express optimizer state); harvests what the GPT demo proves out, while the code is fresh.

@@ -243,6 +243,17 @@ impl Tracer {
             }
             Expr::Index(target, idx) => {
                 let x = self.trace(target, env, fns).tensor("indexing");
+                if let Expr::Neg(inner) = idx.as_ref() {
+                    if let Expr::Num(v) = inner.as_ref() {
+                        let n = x.val.shape[x.bdims..].first().copied()
+                            .unwrap_or_else(|| die("indexing needs rank >= 1"));
+                        if v.fract() != 0.0 || *v > n as f64 || *v == 0.0 {
+                            die(&format!("index -{} out of range for length {}", v, n));
+                        }
+                        let iv = self.constant(n as f64 - v, Dtype::F32);
+                        return self.take_val(x, BVal { val: iv, bdims: 0 });
+                    }
+                }
                 let idx = self.trace(idx, env, fns).tensor("index");
                 self.take_val(x, idx)
             }
@@ -625,6 +636,16 @@ impl Tracer {
         match e {
             Expr::Num(n) => *n,
             Expr::Neg(inner) => -self.num_lit(inner, env, what),
+            Expr::Bin(op, a, b) => {
+                let a = self.num_lit(a, env, what);
+                let b = self.num_lit(b, env, what);
+                match op {
+                    crate::parser::Op::Add => a + b,
+                    crate::parser::Op::Sub => a - b,
+                    crate::parser::Op::Mul => a * b,
+                    crate::parser::Op::Div => a / b,
+                }
+            }
             Expr::Var(s) => {
                 if let Some(v) = env.get(s) {
                     if let TVal::Tensor(b) = v {

@@ -1,0 +1,60 @@
+fn mm(env, w):
+  matmul(env.x, w)
+
+fn qk(q, k):
+  matmul(q, transpose(k))
+
+fn sm(row):
+  softmax(row)
+
+fn rows_sm(m):
+  vmap(sm, m)
+
+fn av(a, v):
+  matmul(a, v)
+
+fn attend(p, x):
+  q = vmap(mm, {x: x}, p.wq)
+  k = vmap(mm, {x: x}, p.wk)
+  v = vmap(mm, {x: x}, p.wv)
+  scores = vmap(qk, q, k) * p.scale + p.mask
+  att = vmap(rows_sm, scores)
+  heads = vmap(av, att, v)
+  sum(vmap(av, heads, p.wo), 0)
+
+fn xent(logits, target):
+  logsumexp(logits) - sum(one_hot(target, 16) * logits)
+
+fn seq_loss(p, ids, targets):
+  x = take(p.wte, ids) + p.wpe
+  logits = matmul(attend(p, x), p.head)
+  mean(vmap(xent, logits, targets))
+
+fn batch_loss(p, idsb, targetsb):
+  mean(vmap(seq_loss, p, idsb, targetsb))
+
+rows = matmul(reshape(arange(4.0), 4, 1), reshape(zeros(4) + 1.0, 1, 4))
+p = {
+  wte: reshape(sin(arange(128.0)), 16, 8) * 0.5,
+  wpe: reshape(cos(arange(32.0)), 4, 8) * 0.1,
+  wq: reshape(sin(arange(64.0)), 2, 8, 4) * 0.3,
+  wk: reshape(cos(arange(64.0)), 2, 8, 4) * 0.3,
+  wv: reshape(sin(arange(64.0) + 1.0), 2, 8, 4) * 0.3,
+  wo: reshape(cos(arange(64.0) + 1.0), 2, 4, 8) * 0.3,
+  head: reshape(sin(arange(128.0) + 2.0), 8, 16) * 0.3,
+  scale: 0.5,
+  mask: where(rows >= transpose(rows), 0.0, 0.0 - 1000000000.0)
+}
+idsb = stack([1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0])
+targetsb = stack([2.0, 3.0, 4.0, 5.0], [6.0, 7.0, 8.0, 9.0])
+
+before = batch_loss(p, idsb, targetsb)
+print(before)
+
+g = grad(batch_loss, p, idsb, targetsb)
+print(where(sum(g.wq * g.wq) > 0.0, 1.0, 0.0))
+print(where(sum(g.wte * g.wte) > 0.0, 1.0, 0.0))
+
+p2 = p - 0.01 * g / (sqrt(g * g) + 0.00000001)
+after = batch_loss(p2, idsb, targetsb)
+print(where(after < before, 1.0, 0.0))

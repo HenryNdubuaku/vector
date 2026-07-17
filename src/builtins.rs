@@ -716,24 +716,63 @@ impl Tracer {
             }
             "vmap" => {
                 let (fname, decl, vals) = self.transform_args("vmap", args, env, fns);
-                let vals: Vec<BVal> = vals.into_iter().map(|v| v.tensor("vmap argument")).collect();
-                let k = vals[0].bdims;
-                if vals.iter().any(|v| v.bdims != k) {
-                    die(&format!("vmap({}) arguments must come from the same batching depth; inline constant arguments into the function body", fname));
-                }
-                let n = match vals[0].val.shape.get(k) {
-                    Some(&n) => n,
-                    None => die(&format!("vmap({}) arguments must have rank >= 1", fname)),
-                };
+                let mut k = 0;
+                let mut prefix: Vec<usize> = Vec::new();
+                let mut any_tensor = false;
                 for v in &vals {
-                    if v.val.shape.get(k) != Some(&n) {
-                        die(&format!("vmap({}) arguments must share the mapped axis: {:?} vs {:?}",
-                                     fname, vals[0].val.shape, v.val.shape));
+                    let mut leaves = Vec::new();
+                    crate::batch::collect_leaves(v, &mut leaves);
+                    if matches!(v, TVal::Tensor(_)) {
+                        any_tensor = true;
+                    }
+                    for b in leaves {
+                        if b.bdims > k {
+                            k = b.bdims;
+                            prefix = b.val.shape[..k].to_vec();
+                        }
                     }
                 }
+                if !any_tensor {
+                    die(&format!("vmap({}) needs a tensor argument to map over; records pass through unmapped", fname));
+                }
+                let lifted: Vec<TVal> = vals.iter().map(|v| match v {
+                    TVal::Record(..) => v.clone(),
+                    TVal::Tensor(b) => {
+                        if b.bdims == k {
+                            return v.clone();
+                        }
+                        let per: Vec<usize> = b.val.shape[b.bdims..].to_vec();
+                        let mut target = prefix.clone();
+                        target.extend(&per);
+                        let mut dims: Vec<usize> = (0..b.bdims).collect();
+                        dims.extend(k..k + per.len());
+                        let val = self.broadcast_along(&b.val, &target, dims);
+                        TVal::Tensor(BVal { val, bdims: k })
+                    }
+                }).collect();
+                let mut n = None;
+                for v in &lifted {
+                    if let TVal::Tensor(b) = v {
+                        let axis = match b.val.shape.get(k) {
+                            Some(&a) => a,
+                            None => die(&format!("vmap({}) arguments must have rank >= 1", fname)),
+                        };
+                        if *n.get_or_insert(axis) != axis {
+                            die(&format!("vmap({}) arguments must share the mapped axis", fname));
+                        }
+                    }
+                }
+                let n = n.unwrap();
                 let mut env2 = HashMap::new();
-                for (param, v) in decl.params.iter().zip(&vals) {
-                    env2.insert(param.clone(), TVal::Tensor(BVal { val: v.val.clone(), bdims: k + 1 }));
+                for (param, v) in decl.params.iter().zip(&lifted) {
+                    match v {
+                        TVal::Tensor(b) => {
+                            env2.insert(param.clone(), TVal::Tensor(BVal { val: b.val.clone(), bdims: k + 1 }));
+                        }
+                        TVal::Record(..) => {
+                            env2.insert(param.clone(), v.clone());
+                        }
+                    }
                 }
                 self.statics.push(HashMap::new());
                 let y = self.trace(&decl.body, &env2, fns).tensor("vmap function result");
@@ -742,7 +781,7 @@ impl Tracer {
                     y.val
                 } else {
                     let per = per_shape(&y);
-                    let mut target: Vec<usize> = vals[0].val.shape[..k].to_vec();
+                    let mut target = prefix.clone();
                     target.push(n);
                     target.extend(&per);
                     let mut dims: Vec<usize> = (0..y.bdims).collect();

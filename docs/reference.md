@@ -11,7 +11,7 @@ Every function below is demonstrated with verified output in [examples.md](examp
 | `module Name(arg):` | module — fields (`w = ...`) plus methods; must define `forward(self, ...)` |
 | `for i in 0..n:` | loop, compiled to one XLA while op; `by` sets the step: `for x in 0.0..1.0 by 0.25:` |
 | `while cond:` | loop until a scalar comparison turns false, compiled to one XLA while op; the body must reassign a binding the condition depends on |
-| `x[i]`, `x[iv]` | index rows along axis 0 — a runtime scalar picks one row, a vector gathers rows (same as `take`) |
+| `x[i]`, `x[iv]` | index rows along axis 0 — a runtime scalar picks one row, a vector gathers rows (same as `take`); negative literals count from the end: `x[-1]` |
 | `x[a:b]` | slice along axis 0 with compile-time bounds; open ends and negative bounds work: `x[:3]`, `x[-2:]` |
 | `import mlp` | bring `fn`/`module` declarations from `mlp.vec` (dots are subdirectories, path relative to the importing file) |
 | `[1.0, 2.0]` | array literal |
@@ -24,7 +24,7 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 ## Transforms
 
 - `grad(f, args...)` — gradient of scalar-valued `f` with respect to its first argument; works on records and module instances (`grad(model.loss, x, t)` returns a model-shaped gradient)
-- `vmap(f, args...)` — map `f` over axis 0 of the arguments; nestable
+- `vmap(f, args...)` — map `f` over axis 0 of the tensor arguments; record arguments pass through unmapped (weights, config), so `vmap(step, model, xb)` maps the batch while the model is shared; nestable, and inner maps lift shallower tensors automatically
 - `jacobian(f, x)` — jacobian of vector-valued `f`
 
 ## Math
@@ -39,7 +39,7 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 - `arange(stop)` / `arange(start, stop)` / `arange(start, stop, step)`
 - `linspace(start, stop, count)`
 - `zeros(dims...)`, `randn(dims...)`
-- `reshape(x, dims...)` — dims are compile-time literals
+- `reshape(x, dims...)` — dims are compile-time constants; arithmetic on constants works: `reshape(x, h * w)`
 - `slice(x, start, size)` — axis 0; `start` may be a runtime scalar, `size` is static
 - `concat(a, b, ...)` — join along axis 0; `stack(a, b, ...)` — join along a new axis 0
 - `take(values, indices)` — fancy indexing along axis 0 (embedding lookups scale to any vocab); differentiable, duplicate indices accumulate gradient, out-of-range indices clamp
