@@ -109,6 +109,7 @@ pub enum OpKind {
         results: Vec<usize>,
         body: Vec<usize>,
         limit: usize,
+        cond: Option<(Vec<usize>, usize)>,
     },
 }
 

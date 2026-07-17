@@ -78,6 +78,7 @@ impl Tracer {
             rng_baked: true,
             seed: None,
             loop_counters: Vec::new(),
+            while_depth: 0,
             claimed: HashSet::new(),
             region_depth: 0,
             grad_depth: 0,

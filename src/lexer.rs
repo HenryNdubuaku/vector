@@ -9,6 +9,7 @@ pub enum Tok {
     Module,
     Import,
     For,
+    While,
     In,
     DotDot,
     Eq,
@@ -153,6 +154,7 @@ pub fn lex(src: &str) -> Lexed {
                     "module" => Tok::Module,
                     "import" => Tok::Import,
                     "for" => Tok::For,
+                    "while" => Tok::While,
                     "in" => Tok::In,
                     _ => Tok::Ident(s),
                 };

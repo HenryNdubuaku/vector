@@ -47,6 +47,7 @@ pub struct Tracer {
     pub rng_baked: bool,
     pub seed: Option<Val>,
     pub loop_counters: Vec<(Val, usize)>,
+    pub while_depth: usize,
     pub claimed: HashSet<usize>,
     pub region_depth: usize,
     pub grad_depth: usize,
@@ -240,8 +241,48 @@ impl Tracer {
                 let r = self.trace(r, env, fns).tensor("comparison operand");
                 TVal::Tensor(self.bcompare(dir, l, r))
             }
+            Expr::Index(target, idx) => {
+                let x = self.trace(target, env, fns).tensor("indexing");
+                let idx = self.trace(idx, env, fns).tensor("index");
+                self.take_val(x, idx)
+            }
+            Expr::IndexRange(target, lo, hi) => {
+                let x = self.trace(target, env, fns).tensor("slicing");
+                if x.bdims != 0 {
+                    die("slicing inside vmap isn't supported yet");
+                }
+                if x.val.shape.is_empty() {
+                    die("slicing needs rank >= 1");
+                }
+                let n = x.val.shape[0];
+                let bound = |t: &Tracer, e: &Option<Box<Expr>>, default: usize| -> usize {
+                    let Some(e) = e else { return default };
+                    let v = t.num_lit(e, env, "slice bound");
+                    if v.fract() != 0.0 {
+                        die("slice bounds must be integers");
+                    }
+                    let v = if v < 0.0 { v + n as f64 } else { v };
+                    if v < 0.0 || v > n as f64 {
+                        die(&format!("slice bound {} out of range for length {}", v, n));
+                    }
+                    v as usize
+                };
+                let start = bound(self, lo, 0);
+                let limit = bound(self, hi, n);
+                if start >= limit {
+                    die(&format!("empty slice: {}..{}", start, limit));
+                }
+                let mut shape = x.val.shape.clone();
+                shape[0] = limit - start;
+                let val = self.emit(OpKind::Slice(0, start, limit), vec![x.val.id], shape, x.val.dtype);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
             Expr::For(var, start_e, end_e, step_e, stmts, rest) => {
                 let env3 = self.trace_for(var, start_e, end_e, step_e, stmts, env, fns);
+                self.trace(rest, &env3, fns)
+            }
+            Expr::While(cond, stmts, rest) => {
+                let env3 = self.trace_while(cond, stmts, env, fns);
                 self.trace(rest, &env3, fns)
             }
             Expr::Let(name, value, body) => {
@@ -437,7 +478,7 @@ impl Tracer {
                 }
 
                 let w = self.emit(
-                    OpKind::While { iter_args, results, body, limit: limit.id },
+                    OpKind::While { iter_args, results, body, limit: limit.id, cond: None },
                     inputs,
                     vec![],
                     Dtype::I64,
@@ -465,7 +506,107 @@ impl Tracer {
                 env3
     }
 
+    pub fn trace_while(&mut self, cond_e: &Expr, stmts: &[(Option<String>, Expr)], env: &HashMap<String, TVal>, fns: &HashMap<String, Decl>) -> HashMap<String, TVal> {
+        if self.grad_depth > 0 {
+            die("differentiating through while isn't supported; use a for loop");
+        }
+        let mut carried: Vec<String> = Vec::new();
+        for (name, _) in stmts {
+            if let Some(n) = name {
+                if env.contains_key(n) && !carried.contains(n) {
+                    carried.push(n.clone());
+                }
+            }
+        }
+        if carried.is_empty() {
+            die("while body must reassign a binding defined before the loop, or the condition never changes");
+        }
+        let init_vals: Vec<TVal> = carried.iter().map(|n| env[n].clone()).collect();
+        let init_leaves_per: Vec<Vec<BVal>> = init_vals.iter().map(|v| {
+            let mut l = Vec::new();
+            collect_leaves(v, &mut l);
+            l
+        }).collect();
 
+        let cond_start = self.nodes.len();
+        self.interned.push(HashMap::new());
+        let arg_leaves: Vec<BVal> = init_leaves_per.iter().flatten().map(|b| {
+            let val = self.emit(OpKind::IterArg, vec![], b.val.shape.clone(), b.val.dtype);
+            BVal { val, bdims: b.bdims }
+        }).collect();
+        let mut env2 = env.clone();
+        let mut arg_iter = arg_leaves.iter().map(|b| b.val.clone()).collect::<Vec<_>>().into_iter();
+        for (name, structure) in carried.iter().zip(&init_vals) {
+            env2.insert(name.clone(), rebuild(structure, &mut arg_iter));
+        }
+
+        self.region_depth += 1;
+        self.while_depth += 1;
+        let c = self.trace(cond_e, &env2, fns).tensor("while condition");
+        if c.val.dtype != Dtype::I1 || !c.val.shape.is_empty() {
+            die("while condition must be a scalar comparison");
+        }
+        let cond_nodes: Vec<usize> = (cond_start..self.nodes.len())
+            .filter(|id| !self.claimed.contains(id))
+            .collect();
+        self.claimed.extend(cond_nodes.iter().copied());
+        self.interned.pop();
+
+        let body_start = self.nodes.len();
+        self.interned.push(HashMap::new());
+        let outer_prints = std::mem::take(&mut self.loop_prints);
+        for (name, stmt) in stmts {
+            let v = self.trace(stmt, &env2, fns);
+            if let Some(name) = name {
+                env2.insert(name.clone(), v);
+            }
+        }
+        self.while_depth -= 1;
+        self.region_depth -= 1;
+        if !self.loop_prints.is_empty() {
+            die("print inside while isn't supported yet (the iteration count is unknown); print after the loop");
+        }
+        self.loop_prints = outer_prints;
+
+        let mut results = Vec::new();
+        for (name, structure) in carried.iter().zip(&init_vals) {
+            let final_val = env2[name].clone();
+            if tval_sig(structure) != tval_sig(&final_val) {
+                die(&format!("loop-carried {} changed shape: {} vs {}",
+                             name, tval_sig(structure), tval_sig(&final_val)));
+            }
+            let mut leaves = Vec::new();
+            collect_leaves(&final_val, &mut leaves);
+            results.extend(leaves.iter().map(|b| b.val.id));
+        }
+
+        let body: Vec<usize> = (body_start..self.nodes.len())
+            .filter(|id| !self.claimed.contains(id))
+            .collect();
+        self.claimed.extend(body.iter().copied());
+        self.interned.pop();
+
+        let iter_args: Vec<usize> = arg_leaves.iter().map(|b| b.val.id).collect();
+        let inputs: Vec<usize> = init_leaves_per.iter().flatten().map(|b| b.val.id).collect();
+        let w = self.emit(
+            OpKind::While { iter_args, results, body, limit: 0, cond: Some((cond_nodes, c.val.id)) },
+            inputs,
+            vec![],
+            Dtype::I64,
+        );
+
+        let mut proj_leaves = Vec::new();
+        for (k, b) in arg_leaves.iter().enumerate() {
+            let val = self.emit(OpKind::Proj(k), vec![w.id], b.val.shape.clone(), b.val.dtype);
+            proj_leaves.push(val);
+        }
+        let mut env3 = env.clone();
+        let mut proj_iter = proj_leaves.into_iter();
+        for (name, structure) in carried.iter().zip(&init_vals) {
+            env3.insert(name.clone(), rebuild(structure, &mut proj_iter));
+        }
+        env3
+    }
 }
 
 fn named_const(name: &str) -> Option<f64> {
@@ -558,6 +699,9 @@ impl Tracer {
     }
 
     pub fn rng_uniform(&mut self, shape: &[usize]) -> Val {
+        if self.while_depth > 0 {
+            die("random inside while isn't supported yet; use a for loop");
+        }
         let seed = self.seed_val();
         self.rng_sites += 1;
         let n = shape.iter().product::<usize>().max(1);

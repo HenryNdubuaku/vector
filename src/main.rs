@@ -164,6 +164,7 @@ fn compile(path: &str) -> (String, Vec<Option<InputSpec>>, Vec<PrintSpec>, Vec<S
         rng_baked: false,
         seed: None,
         loop_counters: Vec::new(),
+        while_depth: 0,
         claimed: std::collections::HashSet::new(),
         region_depth: 0,
         grad_depth: 0,

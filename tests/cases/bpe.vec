@@ -8,9 +8,9 @@ dead = zeros(11)
 for round in 0..2:
   ids = take(ids, argsort(dead))
   dead = sort(dead)
-  left = slice(ids, 0, 10)
-  right = slice(ids, 1, 10)
-  live = where((slice(dead, 0, 10) + slice(dead, 1, 10)) == 0.0, 1.0, 0.0)
+  left = ids[:10]
+  right = ids[1:]
+  live = where(dead[:10] + dead[1:] == 0.0, 1.0, 0.0)
   codes = live * (left * vmax + right) + (1.0 - live) * junk
   counts = bincount(codes, 67600) * (1.0 - one_hot(junk, 67600))
   best = argmax(counts)
@@ -19,11 +19,9 @@ for round in 0..2:
   print(a)
   print(b)
   hit = where(left == a, 1.0, 0.0) * where(right == b, 1.0, 0.0) * live
-  hit = hit * (1.0 - take(hit, arange(10.0) - 1.0) * where(arange(10.0) == 0.0, 0.0, 1.0))
-  grown = take(hit, arange(11.0)) * where(arange(11.0) == 10.0, 0.0, 1.0)
-  mark = take(hit, arange(11.0) - 1.0) * where(arange(11.0) == 0.0, 0.0, 1.0)
-  ids = where(grown == 1.0, vmax - 4.0 + round, ids)
-  dead = maximum(dead, mark)
+  hit = hit * (1.0 - concat([0.0], hit[:9]))
+  ids = where(concat(hit, [0.0]) == 1.0, vmax - 4.0 + round, ids)
+  dead = maximum(dead, concat([0.0], hit))
 
 ids = take(ids, argsort(dead))
 dead = sort(dead)

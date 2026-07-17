@@ -19,6 +19,9 @@ pub enum Expr {
     For(String, Box<Expr>, Box<Expr>, Option<Box<Expr>>, Vec<(Option<String>, Expr)>, Box<Expr>),
     Call(String, Vec<Expr>),
     Apply(Box<Expr>, Vec<Expr>),
+    Index(Box<Expr>, Box<Expr>),
+    IndexRange(Box<Expr>, Option<Box<Expr>>, Option<Box<Expr>>),
+    While(Box<Expr>, Vec<(Option<String>, Expr)>, Box<Expr>),
     Seq(Box<Expr>, Box<Expr>),
 }
 
@@ -215,6 +218,9 @@ impl Parser {
         if matches!(self.peek(), Some(Tok::For)) {
             return self.for_loop(indent);
         }
+        if matches!(self.peek(), Some(Tok::While)) {
+            return self.while_loop(indent);
+        }
         if let Some(Tok::Ident(_)) = self.peek() {
             if matches!(self.toks.get(self.pos + 1), Some(Tok::Eq)) {
                 let name = self.ident("binding name");
@@ -237,6 +243,40 @@ impl Parser {
         } else {
             e
         }
+    }
+
+    fn while_loop(&mut self, indent: usize) -> Expr {
+        let while_col = self.peek_col().unwrap();
+        self.bump();
+        let cond = Box::new(self.expr());
+        self.expect(Tok::Colon, "':' after while condition");
+        let body_col = self.peek_col().unwrap_or(0);
+        if body_col <= while_col {
+            die("while body must be indented past 'while'");
+        }
+        let mut stmts = Vec::new();
+        loop {
+            if let Some(Tok::Ident(_)) = self.peek() {
+                if matches!(self.toks.get(self.pos + 1), Some(Tok::Eq)) {
+                    let name = self.ident("binding name");
+                    self.bump();
+                    stmts.push((Some(name), self.expr()));
+                    if self.body_continues(body_col) { continue; }
+                    break;
+                }
+            }
+            stmts.push((None, self.expr()));
+            if self.body_continues(body_col) { continue; }
+            break;
+        }
+        if !self.body_continues(indent) {
+            if self.repl || self.library {
+                return Expr::While(cond, stmts, Box::new(Expr::Unit));
+            }
+            die("while loop must be followed by an expression");
+        }
+        let rest = self.body(indent);
+        Expr::While(cond, stmts, Box::new(rest))
     }
 
     fn for_loop(&mut self, indent: usize) -> Expr {
@@ -389,6 +429,26 @@ impl Parser {
                 }
                 self.expect(Tok::RParen, "')' or ','");
                 e = Expr::Apply(Box::new(e), args);
+            } else if matches!(self.peek(), Some(Tok::LBracket)) && self.same_line() {
+                self.bump();
+                let lo = if matches!(self.peek(), Some(Tok::Colon)) {
+                    None
+                } else {
+                    Some(Box::new(self.expr()))
+                };
+                if matches!(self.peek(), Some(Tok::Colon)) {
+                    self.bump();
+                    let hi = if matches!(self.peek(), Some(Tok::RBracket)) {
+                        None
+                    } else {
+                        Some(Box::new(self.expr()))
+                    };
+                    self.expect(Tok::RBracket, "']'");
+                    e = Expr::IndexRange(Box::new(e), lo, hi);
+                } else {
+                    self.expect(Tok::RBracket, "']' or ':'");
+                    e = Expr::Index(Box::new(e), lo.unwrap());
+                }
             } else {
                 break;
             }

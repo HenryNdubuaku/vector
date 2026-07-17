@@ -139,6 +139,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         rng_baked: false,
         seed: None,
         loop_counters: Vec::new(),
+        while_depth: 0,
         claimed: HashSet::new(),
         region_depth: 0,
         grad_depth: 0,
@@ -311,6 +312,18 @@ fn walk(
         }
         Expr::For(var, start, end, step, stmts, rest) => {
             let env3 = tracer.trace_for(var, start, end, step, stmts, env, fns);
+            for (name, _) in stmts {
+                if let Some(n) = name {
+                    if env.contains_key(n) && !bound.contains(n) {
+                        bound.push(n.clone());
+                    }
+                }
+            }
+            *env = env3;
+            walk(tracer, rest, env, fns, bound, echo);
+        }
+        Expr::While(cond, stmts, rest) => {
+            let env3 = tracer.trace_while(cond, stmts, env, fns);
             for (name, _) in stmts {
                 if let Some(n) = name {
                     if env.contains_key(n) && !bound.contains(n) {

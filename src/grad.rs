@@ -85,11 +85,26 @@ impl Tracer {
                     let db = self.select(&pred, &zero, g);
                     vec![(ins[0].id, da), (ins[1].id, db)]
                 }
+                "power" => {
+                    let one = self.constant(1.0, node.dtype);
+                    let bm1 = self.ewise("subtract", ins[1].clone(), one);
+                    let abm1 = self.ewise("power", ins[0].clone(), bm1);
+                    let slope = self.ewise("multiply", ins[1].clone(), abm1);
+                    let da = self.ewise("multiply", g.clone(), slope);
+                    let ln = self.unary("log", &ins[0]);
+                    let dout = self.ewise("multiply", out.clone(), ln);
+                    let db = self.ewise("multiply", g.clone(), dout);
+                    vec![(ins[0].id, da), (ins[1].id, db)]
+                }
                 _ => die(&format!("no gradient rule for {}", name)),
             },
             OpKind::Unary(name) => {
                 let da = match name.as_str() {
                     "floor" => return vec![],
+                    "abs" => {
+                        let s = self.unary("sign", &ins[0]);
+                        self.ewise("multiply", g.clone(), s)
+                    }
                     "negate" => self.unary("negate", g),
                     "exponential" => self.ewise("multiply", g.clone(), out),
                     "log" => self.ewise("divide", g.clone(), ins[0].clone()),

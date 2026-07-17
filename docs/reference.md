@@ -10,6 +10,9 @@ Every function below is demonstrated with verified output in [examples.md](examp
 | `fn name(a, b):` | function — body is an indented expression list, last expression is the value |
 | `module Name(arg):` | module — fields (`w = ...`) plus methods; must define `forward(self, ...)` |
 | `for i in 0..n:` | loop, compiled to one XLA while op; `by` sets the step: `for x in 0.0..1.0 by 0.25:` |
+| `while cond:` | loop until a scalar comparison turns false, compiled to one XLA while op; the body must reassign a binding the condition depends on |
+| `x[i]`, `x[iv]` | index rows along axis 0 — a runtime scalar picks one row, a vector gathers rows (same as `take`) |
+| `x[a:b]` | slice along axis 0 with compile-time bounds; open ends and negative bounds work: `x[:3]`, `x[-2:]` |
 | `import mlp` | bring `fn`/`module` declarations from `mlp.vec` (dots are subdirectories, path relative to the importing file) |
 | `[1.0, 2.0]` | array literal |
 | `{a: x, b: y}` | record literal; `.a` accesses a field |
@@ -26,7 +29,7 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 
 ## Math
 
-- elementwise: `exp(x)`, `log(x)`, `tanh(x)`, `sqrt(x)`, `sin(x)`, `cos(x)`, `floor(x)`, `mod(a, b)`, `maximum(a, b)`, `minimum(a, b)`
+- elementwise: `exp(x)`, `log(x)`, `tanh(x)`, `sqrt(x)`, `sin(x)`, `cos(x)`, `floor(x)`, `abs(x)`, `mod(a, b)`, `pow(a, b)`, `maximum(a, b)`, `minimum(a, b)`
 - reductions: `sum(x)`, `mean(x)`, `max(x)`, `min(x)` — optional trailing axis: `sum(m, 0)`
 - linear algebra: `matmul(a, b)` (rank 1 and 2), `transpose(m)`
 - casts: `f32(x)`, `f64(x)`
@@ -38,6 +41,7 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 - `zeros(dims...)`, `randn(dims...)`
 - `reshape(x, dims...)` — dims are compile-time literals
 - `slice(x, start, size)` — axis 0; `start` may be a runtime scalar, `size` is static
+- `concat(a, b, ...)` — join along axis 0; `stack(a, b, ...)` — join along a new axis 0
 - `take(values, indices)` — fancy indexing along axis 0 (embedding lookups scale to any vocab); differentiable, duplicate indices accumulate gradient, out-of-range indices clamp
 - `sort(x)`, `argsort(x)` — vectors; batch with `vmap`; `sort` is differentiable
 - `argmax(x)`, `argmin(x)` — first index on ties

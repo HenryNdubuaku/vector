@@ -2,7 +2,7 @@
 
 The core items are ordered: each unblocks the ones after it. The ecosystem tracks are independent of the core and of each other, contributors can pick any of them up.
 
-## 1. Text and tokenizers — DONE (2026-07-17)
+## 1. Text and tokenizers 
 Tokenization is data prep, not differentiable compute — it lives at the boundary with the other codecs, never in the graph. No strings in the language.
 - [x] `load("data.txt")` → byte tensor; `save(x, "out.txt")` writes one; byte-level models need no tokenizer at all (vocab 256)
 - [x] `tokenize("data.txt", "tokenizer.json")` → id tensor; `print(detokenize(ids, "tokenizer.json"))` for generated text — byte-level BPE (gpt-2 family), verified id-exact against tiktoken incl. contractions/unicode/whitespace; full shakespeare tokenizes in ~0.1s
@@ -12,9 +12,10 @@ Tokenization is data prep, not differentiable compute — it lives at the bounda
 
 ## 2. Small language gaps
 Cheap language work that makes everything after it read naturally — worth landing before the GPT demo so the demo code shows it off.
-- [ ] Indexing sugar `x[i]` / `x[a:b]` as syntax for take/slice — the single biggest recognisability win for python users
-- [ ] `while cond:` with a runtime condition (stablehlo.while already supports it; today only fixed trip counts) — also what early stopping needs later
-- [ ] Builtins a torch user trips on immediately: abs, pow, concat, stack (the Concat op already exists in the graph — just not exposed)
+- [x] Indexing sugar: `x[i]` (runtime scalar or index vector, = take) and `x[a:b]` (static bounds, open ends and negatives work) — differentiable, vmap-friendly for `x[i]`
+- [x] `while cond:` — real runtime condition compiled into the XLA while's cond region; carried records work; grad/print/random inside die with clear messages for now
+- [x] abs, pow, concat, stack — all with gradients; tests/cases/bpe.vec rewritten with slices+concat, byte-identical output
+- [ ] `x[a:b]` with runtime bounds of static width (e.g. `x[k:k+4]`) — needs symbolic width detection; slice() covers it meanwhile
 
 ## 3. The payoff demo: a small GPT in vector
 Byte-level Shakespeare in `example/` — the artifact that makes people install it, and the load test that flushes out remaining gaps.

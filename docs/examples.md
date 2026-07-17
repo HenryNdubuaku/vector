@@ -104,9 +104,9 @@ dead = zeros(11)
 for round in 0..2:
   ids = take(ids, argsort(dead))
   dead = sort(dead)
-  left = slice(ids, 0, 10)
-  right = slice(ids, 1, 10)
-  live = where((slice(dead, 0, 10) + slice(dead, 1, 10)) == 0.0, 1.0, 0.0)
+  left = ids[:10]
+  right = ids[1:]
+  live = where(dead[:10] + dead[1:] == 0.0, 1.0, 0.0)
   codes = live * (left * vmax + right) + (1.0 - live) * junk
   counts = bincount(codes, 67600) * (1.0 - one_hot(junk, 67600))
   best = argmax(counts)
@@ -115,11 +115,9 @@ for round in 0..2:
   print(a)
   print(b)
   hit = where(left == a, 1.0, 0.0) * where(right == b, 1.0, 0.0) * live
-  hit = hit * (1.0 - take(hit, arange(10.0) - 1.0) * where(arange(10.0) == 0.0, 0.0, 1.0))
-  grown = take(hit, arange(11.0)) * where(arange(11.0) == 10.0, 0.0, 1.0)
-  mark = take(hit, arange(11.0) - 1.0) * where(arange(11.0) == 0.0, 0.0, 1.0)
-  ids = where(grown == 1.0, vmax - 4.0 + round, ids)
-  dead = maximum(dead, mark)
+  hit = hit * (1.0 - concat([0.0], hit[:9]))
+  ids = where(concat(hit, [0.0]) == 1.0, vmax - 4.0 + round, ids)
+  dead = maximum(dead, concat([0.0], hit))
 
 ids = take(ids, argsort(dead))
 dead = sort(dead)
@@ -429,6 +427,48 @@ Output:
 12 : f32
 6 : f32
 1 : f32
+```
+
+## index
+
+```python
+x = arange(10.0)
+print(x[3.0])
+print(x[2:5])
+print(x[:3])
+print(x[-3:])
+print(x[[1.0, 4.0, 1.0]])
+
+m = reshape(arange(6.0), 3, 2)
+print(m[1])
+print(m[1:3])
+
+print(abs([0.0 - 3.0, 2.0]))
+print(pow([2.0, 3.0], 2.0))
+print(concat([1.0, 2.0], [3.0]))
+print(stack([1.0, 2.0], [3.0, 4.0]))
+
+fn f(x):
+  sum(x[1:3] * 2.0 + pow(x[0], 2.0))
+
+print(grad(f, [1.0, 2.0, 3.0]))
+```
+
+Output:
+
+```
+3 : f32
+[2, 3, 4] : f32
+[0, 1, 2] : f32
+[7, 8, 9] : f32
+[1, 4, 1] : f32
+[2, 3] : f32
+[[2, 3], [4, 5]] : f32
+[3, 2] : f32
+[4, 9] : f32
+[1, 2, 3] : f32
+[[1, 2], [3, 4]] : f32
+[4, 2, 2] : f32
 ```
 
 ## jacobian
@@ -1142,4 +1182,44 @@ Output:
 [[1, 4], [9, 16]] : f32
 [5, 25] : f32
 [[2, 4], [6, 8]] : f32
+```
+
+## while
+
+```python
+x = 1.0
+while x < 100.0:
+  x = x * 2.0
+print(x)
+
+v = [3.0, 1.0, 4.0]
+n = 0.0
+while norm(v) > 0.1:
+  v = v * 0.5
+  n = n + 1.0
+print(n)
+
+y = 100.0
+steps = 0.0
+while abs(y - sqrt(2.0)) > 0.000001:
+  y = 0.5 * (y + 2.0 / y)
+  steps = steps + 1.0
+print(y)
+print(steps)
+
+m = {a: 1.0, b: [1.0, 1.0]}
+while m.a < 10.0:
+  m = m * 2.0
+print(m)
+```
+
+Output:
+
+```
+128 : f32
+6 : f32
+1.4142135 : f32
+10 : f32
+a: 16 : f32
+b: [16, 16] : f32
 ```

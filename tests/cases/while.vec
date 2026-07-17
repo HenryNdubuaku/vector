@@ -1,0 +1,24 @@
+x = 1.0
+while x < 100.0:
+  x = x * 2.0
+print(x)
+
+v = [3.0, 1.0, 4.0]
+n = 0.0
+while norm(v) > 0.1:
+  v = v * 0.5
+  n = n + 1.0
+print(n)
+
+y = 100.0
+steps = 0.0
+while abs(y - sqrt(2.0)) > 0.000001:
+  y = 0.5 * (y + 2.0 / y)
+  steps = steps + 1.0
+print(y)
+print(steps)
+
+m = {a: 1.0, b: [1.0, 1.0]}
+while m.a < 10.0:
+  m = m * 2.0
+print(m)

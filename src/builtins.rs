@@ -351,6 +351,57 @@ impl Tracer {
                 let b = self.trace(&args[1], env, fns);
                 self.tmap2(name, a, b)
             }
+            "abs" => {
+                if args.len() != 1 {
+                    die(&format!("abs expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns);
+                self.tunary("abs", &v)
+            }
+            "pow" => {
+                if args.len() != 2 {
+                    die(&format!("pow expects (base, exponent), got {} args", args.len()));
+                }
+                let a = self.trace(&args[0], env, fns);
+                let b = self.trace(&args[1], env, fns);
+                self.tmap2("power", a, b)
+            }
+            "concat" | "stack" => {
+                if args.len() < 2 {
+                    die(&format!("{} expects at least 2 args, got {}", name, args.len()));
+                }
+                let parts: Vec<BVal> = args.iter().map(|a| self.trace(a, env, fns).tensor(name)).collect();
+                if parts.iter().any(|p| p.bdims != 0) {
+                    die(&format!("{} inside vmap isn't supported yet", name));
+                }
+                let dtype = parts[0].val.dtype;
+                if parts.iter().any(|p| p.val.dtype != dtype) {
+                    die(&format!("{} expects matching dtypes", name));
+                }
+                let vals: Vec<Val> = if name == "stack" {
+                    if parts.iter().any(|p| p.val.shape != parts[0].val.shape) {
+                        die("stack expects matching shapes");
+                    }
+                    parts.iter().map(|p| {
+                        let mut shape = vec![1];
+                        shape.extend(&p.val.shape);
+                        self.reshape(&p.val, shape)
+                    }).collect()
+                } else {
+                    if parts.iter().any(|p| p.val.shape.is_empty()) {
+                        die("concat expects rank >= 1; stack scalars instead");
+                    }
+                    if parts.iter().any(|p| p.val.shape[1..] != parts[0].val.shape[1..]) {
+                        die("concat expects matching trailing dimensions");
+                    }
+                    parts.iter().map(|p| p.val.clone()).collect()
+                };
+                let mut shape = vals[0].shape.clone();
+                shape[0] = vals.iter().map(|v| v.shape[0]).sum();
+                let inputs: Vec<usize> = vals.iter().map(|v| v.id).collect();
+                let val = self.emit(OpKind::Concat(0), inputs, shape, dtype);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
             "save" => {
                 if args.len() != 2 {
                     die(&format!("save expects (value, \"path\"), got {} args", args.len()));
