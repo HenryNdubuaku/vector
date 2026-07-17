@@ -91,6 +91,53 @@ Output:
 5 : f32
 ```
 
+## bpe
+
+```python
+# byte pair encoding from scratch: count pairs, merge the best, compact with a stable argsort
+
+vmax = 260.0
+junk = vmax * vmax - 1.0
+ids = load("tests/cases/data/bpe.txt")
+dead = zeros(11)
+
+for round in 0..2:
+  ids = take(ids, argsort(dead))
+  dead = sort(dead)
+  left = slice(ids, 0, 10)
+  right = slice(ids, 1, 10)
+  live = where((slice(dead, 0, 10) + slice(dead, 1, 10)) == 0.0, 1.0, 0.0)
+  codes = live * (left * vmax + right) + (1.0 - live) * junk
+  counts = bincount(codes, 67600) * (1.0 - one_hot(junk, 67600))
+  best = argmax(counts)
+  a = floor(best / vmax)
+  b = mod(best, vmax)
+  print(a)
+  print(b)
+  hit = where(left == a, 1.0, 0.0) * where(right == b, 1.0, 0.0) * live
+  hit = hit * (1.0 - take(hit, arange(10.0) - 1.0) * where(arange(10.0) == 0.0, 0.0, 1.0))
+  grown = take(hit, arange(11.0)) * where(arange(11.0) == 10.0, 0.0, 1.0)
+  mark = take(hit, arange(11.0) - 1.0) * where(arange(11.0) == 0.0, 0.0, 1.0)
+  ids = where(grown == 1.0, vmax - 4.0 + round, ids)
+  dead = maximum(dead, mark)
+
+ids = take(ids, argsort(dead))
+dead = sort(dead)
+print(where(dead == 1.0, 0.0 - 1.0, ids))
+print(sum(1.0 - dead))
+```
+
+Output:
+
+```
+round 0: 97 : f32
+round 1: 256 : f32
+round 0: 98 : f32
+round 1: 256 : f32
+[257, 256, 99, 257, -1, -1, -1, -1, -1, -1, -1] : f32
+4 : f32
+```
+
 ## broadcast
 
 ```python
@@ -927,6 +974,43 @@ Output:
 120 : f32
 2 : f32
 [2, 0, 1] : f32
+```
+
+## text
+
+```python
+x = load("tests/cases/data/hello.txt")
+print(x)
+print(text(x))
+save(x, "tests/cases/data/copy.txt")
+y = load("tests/cases/data/copy.txt")
+print(sum(where(y == x, 1.0, 0.0)))
+
+print(bincount([0.0, 1.0, 1.0, 3.0, 1.0], 4))
+
+counts = bincount(x, 256)
+present = where(counts > 0.0, 1.0, 0.0)
+rank = cumsum(present) - 1.0
+chars = take(rank, x)
+print(sum(present))
+print(chars)
+
+ids = tokenize("tests/cases/data/aab.txt", "tests/cases/data/tok.json")
+print(ids)
+print(detokenize(ids, "tests/cases/data/tok.json"))
+```
+
+Output:
+
+```
+[104, 101, 108, 108, 111, 32, 118, 101, 99, 116, 111, 114] : f32
+hello vector
+12 : f32
+[1, 3, 0, 1] : f32
+9 : f32
+[3, 2, 4, 4, 5, 0, 8, 2, 1, 7, 5, 6] : f32
+[4, 5] : f32
+aab aab
 ```
 
 ## train

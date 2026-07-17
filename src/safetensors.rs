@@ -25,6 +25,7 @@ pub struct StMeta {
 pub enum Json {
     Str(String),
     Num(f64),
+    Bool(bool),
     Other,
     Arr(Vec<Json>),
     Obj(Vec<(String, Json)>),
@@ -73,8 +74,8 @@ impl<'a> JsonParser<'a> {
             b'"' => Json::Str(self.string()),
             b'{' => self.object(),
             b'[' => self.array(),
-            b't' => { self.literal("true"); Json::Other }
-            b'f' => { self.literal("false"); Json::Other }
+            b't' => { self.literal("true"); Json::Bool(true) }
+            b'f' => { self.literal("false"); Json::Bool(false) }
             b'n' => { self.literal("null"); Json::Other }
             _ => self.number(),
         }
@@ -332,6 +333,10 @@ pub fn write_save(spec: &SaveSpec, tensors: &[Tensor]) {
         crate::audio::write_wav(spec, tensors);
         return;
     }
+    if spec.path.ends_with(".txt") {
+        crate::text::write_txt(&spec.path, &tensors[0].f64_vec());
+        return;
+    }
     let mut parts: Vec<String> = Vec::new();
     if !spec.metadata.is_empty() {
         let kv: Vec<String> = spec.metadata.iter()
@@ -504,8 +509,20 @@ impl Tracer {
             }
         } else if path.ends_with(".wav") {
             spec = crate::audio::wav_save_spec(self, v, path);
+        } else if path.ends_with(".txt") {
+            match v {
+                TVal::Tensor(b) => {
+                    check_leaf(b, path);
+                    if b.val.shape.len() != 1 {
+                        die("save to .txt expects a vector of bytes");
+                    }
+                    spec.names.push(String::new());
+                    spec.vals.push(b.val.clone());
+                }
+                TVal::Record(..) => die("save to .txt expects a vector of bytes"),
+            }
         } else {
-            die("save expects a path ending in .npy, .safetensors, .csv, .png or .wav");
+            die("save expects a path ending in .npy, .safetensors, .csv, .png, .wav or .txt");
         }
         self.saves.push(spec);
     }

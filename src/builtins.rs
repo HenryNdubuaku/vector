@@ -85,6 +85,72 @@ impl Tracer {
                 let denom = self.constant(count as f64, v.val.dtype);
                 self.tmap2("divide", total, TVal::Tensor(BVal { val: denom, bdims: 0 }))
             }
+            "tokenize" => {
+                if args.len() != 2 {
+                    die(&format!("tokenize expects (\"data.txt\", \"tokenizer.json\"), got {} args", args.len()));
+                }
+                let (txt, tok) = match (&args[0], &args[1]) {
+                    (Expr::Str(a), Expr::Str(b)) => (a.clone(), b.clone()),
+                    _ => die("tokenize expects two file path string literals"),
+                };
+                let txt = if crate::net::is_url(&txt) { crate::net::fetch(&txt) } else { txt };
+                let tok = if crate::net::is_url(&tok) { crate::net::fetch(&tok) } else { tok };
+                if let Some(&(_, id)) = self.inputs.iter()
+                    .find(|(src, _)| matches!(src, InputSource::Tokens(t, k) if *t == txt && *k == tok)) {
+                    return TVal::Tensor(BVal { val: self.val(id), bdims: 0 });
+                }
+                let n = crate::text::encode_file(&txt, &tok).len();
+                let val = self.emit(OpKind::Input, vec![], vec![n], Dtype::F32);
+                self.inputs.push((InputSource::Tokens(txt, tok), val.id));
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
+            "detokenize" => {
+                if args.len() != 2 {
+                    die(&format!("detokenize expects (ids, \"tokenizer.json\"), got {} args", args.len()));
+                }
+                let tok = match &args[1] {
+                    Expr::Str(s) => s.clone(),
+                    _ => die("detokenize expects a tokenizer path string literal"),
+                };
+                let tok = if crate::net::is_url(&tok) { crate::net::fetch(&tok) } else { tok };
+                crate::text::check_tokenizer(&tok);
+                let v = self.trace(&args[0], env, fns);
+                let b = v.tensor("detokenize");
+                self.decodes.insert(b.val.id, crate::trace::Decode::Tokens(tok));
+                TVal::Tensor(b)
+            }
+            "text" => {
+                if args.len() != 1 {
+                    die(&format!("text expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns);
+                let b = v.tensor("text");
+                self.decodes.insert(b.val.id, crate::trace::Decode::Bytes);
+                TVal::Tensor(b)
+            }
+            "bincount" => {
+                if args.len() != 2 {
+                    die(&format!("bincount expects (values, bins), got {} args", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns).tensor("bincount");
+                if v.bdims != 0 {
+                    die("bincount inside vmap isn't supported yet");
+                }
+                if v.val.shape.len() != 1 {
+                    die("bincount expects a vector");
+                }
+                let bins = self.int_lit(&args[1], env, "bincount bins");
+                if bins == 0 {
+                    die("bincount needs at least one bin");
+                }
+                let n = v.val.shape[0];
+                let idx = self.convert(&v.val, Dtype::I64);
+                let zeros = self.zeros(&[bins], Dtype::F32);
+                let one = self.constant(1.0, Dtype::F32);
+                let ones = self.broadcast(&one, &[n]);
+                let val = self.emit(OpKind::Scatter, vec![zeros.id, idx.id, ones.id], vec![bins], Dtype::F32);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
             "print" => {
                 if args.len() != 1 {
                     die(&format!("print expects 1 arg, got {}", args.len()));
@@ -387,6 +453,16 @@ impl Tracer {
                 }
                 if path.ends_with(".mp3") || path.ends_with(".flac") || path.ends_with(".ogg") {
                     die("compressed audio isn't supported; convert to wav (pcm)");
+                }
+                if path.ends_with(".txt") {
+                    if let Some(&(_, id)) = self.inputs.iter()
+                        .find(|(src, _)| matches!(src, InputSource::Text(p) if *p == path)) {
+                        return TVal::Tensor(BVal { val: self.val(id), bdims: 0 });
+                    }
+                    let n = crate::text::txt_len(&path);
+                    let val = self.emit(OpKind::Input, vec![], vec![n], Dtype::F32);
+                    self.inputs.push((InputSource::Text(path), val.id));
+                    return TVal::Tensor(BVal { val, bdims: 0 });
                 }
                 if let Some(&(_, id)) = self.inputs.iter()
                     .find(|(src, _)| matches!(src, InputSource::Npy(p) if *p == path)) {

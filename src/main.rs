@@ -19,6 +19,7 @@ mod runtime;
 mod safetensors;
 mod serve;
 mod table;
+mod text;
 mod trace;
 
 use std::collections::HashMap;
@@ -155,6 +156,7 @@ fn compile(path: &str) -> (String, Vec<Option<InputSpec>>, Vec<PrintSpec>, Vec<S
         figure: FigureSpec::default(),
         plays: Vec::new(),
         loop_prints: Vec::new(),
+        decodes: HashMap::new(),
         modules,
         statics: Vec::new(),
         rng: 0x243F6A8885A308D3,
@@ -191,13 +193,13 @@ fn compile(path: &str) -> (String, Vec<Option<InputSpec>>, Vec<PrintSpec>, Vec<S
     let prints = tracer.prints.clone();
     let specs: Vec<Option<InputSpec>> = tracer.inputs.iter()
         .map(|(src, id)| match src {
-            graph::InputSource::Npy(path) | graph::InputSource::Image(path) | graph::InputSource::Audio(path) => Some(InputSpec {
+            graph::InputSource::Npy(path) | graph::InputSource::Image(path) | graph::InputSource::Audio(path) | graph::InputSource::Text(path) => Some(InputSpec {
                 path: path.clone(),
                 entry: None,
                 shape: tracer.nodes[*id].shape.clone(),
                 dtype: tracer.nodes[*id].dtype,
             }),
-            graph::InputSource::Safetensors(path, name) | graph::InputSource::Csv(path, name) => Some(InputSpec {
+            graph::InputSource::Tokens(path, name) | graph::InputSource::Safetensors(path, name) | graph::InputSource::Csv(path, name) => Some(InputSpec {
                 path: path.clone(),
                 entry: Some(name.clone()),
                 shape: tracer.nodes[*id].shape.clone(),
@@ -215,18 +217,35 @@ fn compile(path: &str) -> (String, Vec<Option<InputSpec>>, Vec<PrintSpec>, Vec<S
     (module, specs, prints, tracer.saves, tracer.exports, tracer.figures, tracer.plays)
 }
 
-fn print_result(label: &Option<String>, rows: &Option<RowMeta>, tensor: &runtime::Tensor) {
+fn render(decode: &trace::Decode, vals: &[f64]) -> String {
+    match decode {
+        trace::Decode::Bytes => text::bytes_to_string(vals),
+        trace::Decode::Tokens(tok) => text::decode_ids(vals, tok),
+    }
+}
+
+fn print_result(label: &Option<String>, rows: &Option<RowMeta>, decode: &Option<trace::Decode>, tensor: &runtime::Tensor) {
+    let body = |vals: &[f64], plain: String| match decode {
+        Some(d) => render(d, vals),
+        None => plain,
+    };
     match rows {
-        None => match label {
-            Some(l) => println!("{}: {}", l, format_tensor(tensor)),
-            None => println!("{}", format_tensor(tensor)),
-        },
+        None => {
+            let text = body(&tensor.f64_vec(), format_tensor(tensor));
+            match label {
+                Some(l) => println!("{}: {}", l, text),
+                None => println!("{}", text),
+            }
+        }
         Some(rm) => {
+            let all = tensor.f64_vec();
+            let row_len: usize = tensor.shape()[1..].iter().product::<usize>().max(1);
             for i in 0..tensor.shape()[0] {
                 let tag = format!("{} {}", rm.var, rm.start + i as f64 * rm.step);
+                let text = body(&all[i * row_len..(i + 1) * row_len], tensor.format_row(i));
                 match label {
-                    Some(l) => println!("{}: {}: {}", tag, l, tensor.format_row(i)),
-                    None => println!("{}: {}", tag, tensor.format_row(i)),
+                    Some(l) => println!("{}: {}: {}", tag, l, text),
+                    None => println!("{}: {}", tag, text),
                 }
             }
         }
@@ -346,7 +365,7 @@ fn run(path: &str) {
     let mut results = execute(&module, &specs).into_iter();
     for spec in &prints {
         let tensor = results.next().unwrap();
-        print_result(&spec.label, &spec.rows, &tensor);
+        print_result(&spec.label, &spec.rows, &spec.decode, &tensor);
     }
     for spec in &saves {
         let tensors: Vec<_> = spec.names.iter().map(|_| results.next().unwrap()).collect();

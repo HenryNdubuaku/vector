@@ -2,12 +2,13 @@
 
 The core items are ordered: each unblocks the ones after it. The ecosystem tracks are independent of the core and of each other, contributors can pick any of them up.
 
-## 1. Text and tokenizers
+## 1. Text and tokenizers — DONE (2026-07-17)
 Tokenization is data prep, not differentiable compute — it lives at the boundary with the other codecs, never in the graph. No strings in the language.
-- [ ] `load("data.txt")` → byte tensor; byte-level models need no tokenizer at all (vocab 256)
-- [ ] Read HuggingFace `tokenizer.json` (JSON parser already exists); BPE encode host-side in Rust
-- [ ] `tokenize("data.txt", "tokenizer.json")` → id tensor; `detokenize(ids, "tokenizer.json")` for printing generated text
-- [ ] Until then, document the zero-work path: pre-tokenize with any tool → save ids as `.npy` → `load()`
+- [x] `load("data.txt")` → byte tensor; `save(x, "out.txt")` writes one; byte-level models need no tokenizer at all (vocab 256)
+- [x] `tokenize("data.txt", "tokenizer.json")` → id tensor; `print(detokenize(ids, "tokenizer.json"))` for generated text — byte-level BPE (gpt-2 family), verified id-exact against tiktoken incl. contractions/unicode/whitespace; full shakespeare tokenizes in ~0.1s
+- [x] `print(text(x))` renders byte tensors as text; `bincount(values, bins)` exposed (scatter-add)
+- [x] Tokenizers from scratch IN vector proved out: bincount pair counts + stable-argsort compaction — tests/cases/bpe.vec is a working bpe trainer in 30 lines
+- [ ] Non-byte-level tokenizers (sentencepiece/metaspace, llama family) — vector dies loudly on them for now
 
 ## 2. Small language gaps
 Cheap language work that makes everything after it read naturally — worth landing before the GPT demo so the demo code shows it off.

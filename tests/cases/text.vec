@@ -1,0 +1,19 @@
+x = load("tests/cases/data/hello.txt")
+print(x)
+print(text(x))
+save(x, "tests/cases/data/copy.txt")
+y = load("tests/cases/data/copy.txt")
+print(sum(where(y == x, 1.0, 0.0)))
+
+print(bincount([0.0, 1.0, 1.0, 3.0, 1.0], 4))
+
+counts = bincount(x, 256)
+present = where(counts > 0.0, 1.0, 0.0)
+rank = cumsum(present) - 1.0
+chars = take(rank, x)
+print(sum(present))
+print(chars)
+
+ids = tokenize("tests/cases/data/aab.txt", "tests/cases/data/tok.json")
+print(ids)
+print(detokenize(ids, "tests/cases/data/tok.json"))

@@ -131,6 +131,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         figure: crate::plot::FigureSpec::default(),
         plays: Vec::new(),
         loop_prints: Vec::new(),
+        decodes: HashMap::new(),
         modules: session.modules.clone(),
         statics: Vec::new(),
         rng: session.rng,
@@ -163,7 +164,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
     let mut metas: Vec<Meta> = Vec::new();
     let mut outputs: Vec<Val> = Vec::new();
     for spec in tracer.prints.clone() {
-        metas.push(Meta::Show(spec.label, spec.rows));
+        metas.push(Meta::Show(spec.label, spec.rows, spec.decode));
         outputs.push(spec.val);
     }
     if let Some(v) = &echo {
@@ -196,13 +197,13 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         let module = build_module(&tracer.nodes, &params, &outputs);
         let feeds = tracer.inputs.iter()
             .map(|(src, id)| match src {
-                InputSource::Npy(path) | InputSource::Image(path) | InputSource::Audio(path) => input_host_buffer(&InputSpec {
+                InputSource::Npy(path) | InputSource::Image(path) | InputSource::Audio(path) | InputSource::Text(path) => input_host_buffer(&InputSpec {
                     path: path.clone(),
                     entry: None,
                     shape: tracer.nodes[*id].shape.clone(),
                     dtype: tracer.nodes[*id].dtype,
                 }),
-                InputSource::Safetensors(path, name) | InputSource::Csv(path, name) => input_host_buffer(&InputSpec {
+                InputSource::Tokens(path, name) | InputSource::Safetensors(path, name) | InputSource::Csv(path, name) => input_host_buffer(&InputSpec {
                     path: path.clone(),
                     entry: Some(name.clone()),
                     shape: tracer.nodes[*id].shape.clone(),
@@ -219,9 +220,9 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
     let mut captured: Vec<Tensor> = Vec::new();
     for meta in &metas {
         match meta {
-            Meta::Show(label, rows) => {
+            Meta::Show(label, rows, decode) => {
                 let t = results.next().unwrap();
-                crate::print_result(label, rows, &t);
+                crate::print_result(label, rows, decode, &t);
             }
             Meta::Capture => captured.push(results.next().unwrap()),
         }
@@ -260,7 +261,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
 }
 
 enum Meta {
-    Show(Option<String>, Option<crate::trace::RowMeta>),
+    Show(Option<String>, Option<crate::trace::RowMeta>, Option<crate::trace::Decode>),
     Capture,
 }
 
@@ -330,7 +331,7 @@ fn walk(
 fn flatten_show(v: &TVal, label: Option<String>, metas: &mut Vec<Meta>, outputs: &mut Vec<Val>) {
     match v {
         TVal::Tensor(b) => {
-            metas.push(Meta::Show(label, None));
+            metas.push(Meta::Show(label, None, None));
             outputs.push(b.val.clone());
         }
         TVal::Record(_, fields) => {

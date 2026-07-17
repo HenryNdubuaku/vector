@@ -70,6 +70,7 @@ impl Tracer {
             figure: crate::plot::FigureSpec::default(),
             plays: Vec::new(),
             loop_prints: Vec::new(),
+            decodes: HashMap::new(),
             modules: self.modules.clone(),
             statics: Vec::new(),
             rng: self.rng,

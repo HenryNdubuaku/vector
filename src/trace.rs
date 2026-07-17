@@ -15,17 +15,25 @@ pub struct RowMeta {
     pub step: f64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Decode {
+    Bytes,
+    Tokens(String),
+}
+
 #[derive(Debug, Clone)]
 pub struct PrintSpec {
     pub label: Option<String>,
     pub val: Val,
     pub rows: Option<RowMeta>,
+    pub decode: Option<Decode>,
 }
 
 pub struct Tracer {
     pub nodes: Vec<Node>,
     pub prints: Vec<PrintSpec>,
-    pub loop_prints: Vec<(Option<String>, Val)>,
+    pub loop_prints: Vec<(Option<String>, Val, Option<Decode>)>,
+    pub decodes: HashMap<usize, Decode>,
     pub inputs: Vec<(InputSource, usize)>,
     pub saves: Vec<SaveSpec>,
     pub exports: Vec<ExportSpec>,
@@ -314,13 +322,13 @@ impl Tracer {
                         if !drained.is_empty() && self.region_depth > 1 {
                             die("print inside nested loops isn't supported; print in the outer loop");
                         }
-                        for (label, val) in drained {
+                        for (label, val, decode) in drained {
                             let tag = format!("{} {}", var, start + k as f64 * step);
                             let label = match label {
                                 Some(l) => format!("{}: {}", tag, l),
                                 None => tag,
                             };
-                            self.prints.push(PrintSpec { label: Some(label), val, rows: None });
+                            self.prints.push(PrintSpec { label: Some(label), val, rows: None, decode });
                         }
                     }
                     self.region_depth -= 1;
@@ -386,7 +394,7 @@ impl Tracer {
                 let next_counter = self.ewise("add", counter_arg.clone(), one);
 
                 let mut print_bufs = Vec::new();
-                for (label, val) in &my_prints {
+                for (label, val, decode) in &my_prints {
                     let mut bshape = vec![iterations];
                     bshape.extend(&val.shape);
                     let buf_arg = self.emit(OpKind::IterArg, vec![], bshape.clone(), val.dtype);
@@ -397,7 +405,7 @@ impl Tracer {
                     let mut dus_inputs = vec![buf_arg.id, upd.id, counter_arg.id];
                     dus_inputs.extend(std::iter::repeat(zero.id).take(val.shape.len()));
                     let updated = self.emit(OpKind::DynUpdateSlice, dus_inputs, bshape.clone(), val.dtype);
-                    print_bufs.push((label.clone(), buf_arg, updated, bshape));
+                    print_bufs.push((label.clone(), buf_arg, updated, bshape, decode.clone()));
                 }
 
                 let mut results = vec![next_counter.id];
@@ -411,7 +419,7 @@ impl Tracer {
                     collect_leaves(&final_val, &mut leaves);
                     results.extend(leaves.iter().map(|b| b.val.id));
                 }
-                results.extend(print_bufs.iter().map(|(_, _, updated, _)| updated.id));
+                results.extend(print_bufs.iter().map(|(_, _, updated, _, _)| updated.id));
 
                 let body: Vec<usize> = (body_start..self.nodes.len())
                     .filter(|id| !self.claimed.contains(id))
@@ -421,10 +429,10 @@ impl Tracer {
 
                 let mut iter_args = vec![counter_arg.id];
                 iter_args.extend(arg_leaves.iter().map(|b| b.val.id));
-                iter_args.extend(print_bufs.iter().map(|(_, arg, _, _)| arg.id));
+                iter_args.extend(print_bufs.iter().map(|(_, arg, _, _, _)| arg.id));
                 let mut inputs = vec![counter_init.id];
                 inputs.extend(init_leaves_per.iter().flatten().map(|b| b.val.id));
-                for (_, arg, _, bshape) in &print_bufs {
+                for (_, arg, _, bshape, _) in &print_bufs {
                     inputs.push(self.zeros(bshape, arg.dtype).id);
                 }
 
@@ -440,12 +448,13 @@ impl Tracer {
                     let val = self.emit(OpKind::Proj(k + 1), vec![w.id], b.val.shape.clone(), b.val.dtype);
                     proj_leaves.push(val);
                 }
-                for (j, (label, arg, _, bshape)) in print_bufs.iter().enumerate() {
+                for (j, (label, arg, _, bshape, decode)) in print_bufs.iter().enumerate() {
                     let val = self.emit(OpKind::Proj(1 + arg_leaves.len() + j), vec![w.id], bshape.clone(), arg.dtype);
                     self.prints.push(PrintSpec {
                         label: label.clone(),
                         val,
                         rows: Some(RowMeta { var: var.clone(), start, step }),
+                        decode: decode.clone(),
                     });
                 }
                 let mut env3 = env.clone();

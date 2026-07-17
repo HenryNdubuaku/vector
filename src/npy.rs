@@ -97,6 +97,9 @@ pub fn input_host_buffer(spec: &InputSpec) -> HostBuffer {
         if spec.path.ends_with(".csv") {
             return crate::table::csv_host_buffer(&spec.path, name, &spec.shape);
         }
+        if spec.path.ends_with(".txt") {
+            return crate::text::tokens_host_buffer(&spec.path, name, &spec.shape);
+        }
         return crate::safetensors::tensor_host_buffer(&spec.path, name, &spec.shape, spec.dtype);
     }
     if spec.path.ends_with(".png") {
@@ -104,6 +107,9 @@ pub fn input_host_buffer(spec: &InputSpec) -> HostBuffer {
     }
     if spec.path.ends_with(".wav") {
         return crate::audio::wav_host_buffer(&spec.path, &spec.shape);
+    }
+    if spec.path.ends_with(".txt") {
+        return crate::text::txt_host_buffer(&spec.path, &spec.shape);
     }
     let (shape, dtype, offset) = npy_meta(&spec.path);
     if shape != spec.shape || dtype != spec.dtype {

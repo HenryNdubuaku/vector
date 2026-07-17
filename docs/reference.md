@@ -43,6 +43,7 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 - `argmax(x)`, `argmin(x)` — first index on ties
 - `cumsum(x)`
 - `one_hot(indices, depth)`
+- `bincount(values, bins)` — count occurrences of each integer value; out-of-range values are dropped
 - `where(cond, a, b)` — elementwise select
 
 ## Randomness
@@ -60,6 +61,16 @@ Random at run time, different every run; set `VECTOR_SEED=<n>` to reproduce a ru
 - initializers: `glorot_uniform(fan_in, fan_out)`, `glorot_normal(fan_in, fan_out)`, `he_uniform(fan_in, fan_out)`, `he_normal(fan_in, fan_out)`, `lecun_uniform(fan_in, fan_out)`, `lecun_normal(fan_in, fan_out)`
 - stdlib functions (rank-1, written in vector itself; batch with `vmap`): `relu(x)`, `sigmoid(x)`, `softmax(x)`, `logsumexp(x)`, `var(x)`, `std(x)`, `norm(x)`
 
+## Text
+
+Text enters as bytes or token ids — there are no strings in the graph.
+
+- `load("data.txt")` — the file as a vector of byte values 0..255; byte-level models need no tokenizer (vocab 256)
+- `tokenize("data.txt", "tokenizer.json")` — the file as a vector of token ids; any HuggingFace byte-level BPE tokenizer (gpt-2 family) works
+- `detokenize(ids, "tokenizer.json")` — mark generated ids for printing as text: `print(detokenize(ids, "tokenizer.json"))`
+- `text(x)` — mark a byte vector for printing as text: `print(text(x))`; `save(x, "out.txt")` writes it as a file
+- tokenizers also build in vector itself: count pairs with `bincount`, merge with `where`, compact with `take(ids, argsort(dead))` — see the bpe example in [examples.md](examples.md)
+
 ## Files and network
 
 `load("path")` and `save(value, "path")` dispatch on extension; `load` also accepts `https://` URLs (fetched once into `~/.vector/downloads`).
@@ -71,6 +82,7 @@ Random at run time, different every run; set `VECTOR_SEED=<n>` to reproduce a ru
 | `.csv` | record of f32 column vectors; text columns factorize to category codes |
 | `.png` | image tensor `[h, w]` or `[h, w, c]`, f32 in 0..1 |
 | `.wav` | record `{samples, rate}`, f32 in -1..1 |
+| `.txt` | vector of byte values, f32 in 0..255 |
 
 A `load` after a `save` of the same path in one program returns the saved value.
 

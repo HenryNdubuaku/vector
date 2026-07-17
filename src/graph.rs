@@ -40,6 +40,8 @@ pub enum InputSource {
     Csv(String, String),
     Image(String),
     Audio(String),
+    Text(String),
+    Tokens(String, String),
     Seed,
     Live(String),
 }

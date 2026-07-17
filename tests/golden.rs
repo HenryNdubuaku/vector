@@ -23,6 +23,13 @@ fn write_fixtures() {
     fs::write("tests/cases/data/m.npy", npy_bytes("<f4", "(2, 2)", &m)).unwrap();
     let v: Vec<u8> = [3.0f64, 4.0].iter().flat_map(|x| x.to_le_bytes()).collect();
     fs::write("tests/cases/data/v.npy", npy_bytes("<f8", "(2,)", &v)).unwrap();
+    fs::write("tests/cases/data/hello.txt", "hello vector").unwrap();
+    fs::write("tests/cases/data/aab.txt", "aab aab").unwrap();
+    fs::write("tests/cases/data/bpe.txt", "abababcabab").unwrap();
+    fs::write(
+        "tests/cases/data/tok.json",
+        r#"{"model": {"type": "BPE", "vocab": {"a": 0, "b": 1, "Ġ": 2, "aa": 3, "aab": 4, "Ġaab": 5}, "merges": ["a a", "aa b", "Ġ aab"]}, "pre_tokenizer": {"type": "ByteLevel", "add_prefix_space": false}}"#,
+    ).unwrap();
 }
 
 #[test]
