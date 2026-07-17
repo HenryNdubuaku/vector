@@ -172,7 +172,7 @@ vector filename.vec --accelerate
 
 ## Contributing
 
+- [todo.md](todo.md) is the official list, pick anything from it. 
+- The core items are ordered; the ecosystem tracks (notebooks, editor support, packages, docker) are self-contained and make good first contributions.
 - Follow the intuitive and minimalist coding established in the codebase.
-- Try bringing table, plot, etc up to parity with equivalent Python libs.
-- Create an official Docker image, test on different cloud platforms. 
-- Make the docs intuitive.
+- `cargo test` must stay green: the golden tests are the merge gate, and the docs coverage test keeps the reference honest.
