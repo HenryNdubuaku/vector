@@ -45,6 +45,14 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 - `one_hot(indices, depth)`
 - `where(cond, a, b)` — elementwise select
 
+## Randomness
+
+Random at run time, different every run; set `VECTOR_SEED=<n>` to reproduce a run exactly. Initializers (`randn`, `glorot_uniform`, ...) stay fixed at compile time so programs are testable. Not yet supported by the metal plugin.
+
+- `uniform(dims...)` — uniform values in [0, 1]
+- `dropout(x, rate)` — inverted dropout: keeps values with probability 1-rate and rescales; differentiable; becomes identity in `export`ed models
+- `sample(logits)` — draw one index from a categorical distribution over a logits vector (Gumbel-max); batch with `vmap`; use `argmax` for greedy
+
 ## Neural networks
 
 - `Linear(in_size, out_size)` — stdlib module: `w` (glorot uniform), `b` (zeros), `forward(self, x)`
@@ -91,4 +99,4 @@ vector version                print version
 --accelerate                  run on the machine's accelerator (gpu/tpu); cpu is the default
 ```
 
-Environment: `VECTOR_BACKEND=<name>` pins a backend, `PJRT_PLUGIN_PATH` overrides the plugin, `XLA_FLAGS` passes through to XLA, `VECTOR_LOGS=1` shows the runtime logs vector hides.
+Environment: `VECTOR_BACKEND=<name>` pins a backend, `PJRT_PLUGIN_PATH` overrides the plugin, `XLA_FLAGS` passes through to XLA, `VECTOR_LOGS=1` shows the runtime logs vector hides, `VECTOR_SEED=<n>` pins the run-time randomness.

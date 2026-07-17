@@ -76,8 +76,20 @@ pub fn host_buffer(dtype: Dtype, shape: &[usize], data: &[u8]) -> HostBuffer {
             let vals: Vec<f64> = data.chunks_exact(8).map(|c| f64::from_le_bytes(c.try_into().unwrap())).collect();
             HostBuffer::from_data(vals, Some(dims), None)
         }
-        Dtype::I1 | Dtype::I64 => unreachable!(),
+        Dtype::I1 | Dtype::I32 | Dtype::I64 | Dtype::U32 | Dtype::U64 => unreachable!(),
     }
+}
+
+pub fn seed_host_buffer() -> HostBuffer {
+    let seed = match std::env::var("VECTOR_SEED") {
+        Ok(s) => s.parse::<u64>()
+            .unwrap_or_else(|_| die(&format!("VECTOR_SEED must be a number, got {}", s))),
+        Err(_) => std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 20) ^ std::process::id() as u64)
+            .unwrap_or(0),
+    };
+    HostBuffer::from_data(vec![(seed & 0xFFFFFF) as f32], Some(vec![]), None)
 }
 
 pub fn input_host_buffer(spec: &InputSpec) -> HostBuffer {

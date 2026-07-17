@@ -712,6 +712,50 @@ Output:
 [-0.5] : f32
 ```
 
+## random
+
+```python
+x = zeros(4096) + 1.0
+m = mean(dropout(x, 0.5))
+print(where(m > 0.85, 1.0, 0.0) * where(m < 1.15, 1.0, 0.0))
+
+u = uniform(4096)
+print(where(mean(u) > 0.4, 1.0, 0.0) * where(mean(u) < 0.6, 1.0, 0.0))
+print(where(max(u) <= 1.0, 1.0, 0.0) * where(min(u) >= 0.0, 1.0, 0.0))
+
+fn pick(r):
+  sample(r * 1.0)
+
+logits = zeros(1000, 3) + [0.0, 10.0, 0.0]
+hits = mean(where(vmap(pick, logits) == 1.0, 1.0, 0.0))
+print(where(hits > 0.95, 1.0, 0.0))
+
+prev = zeros(16)
+repeats = 0.0
+for i in 0..8:
+  u2 = uniform(16)
+  repeats = repeats + sum(where(u2 == prev, 1.0, 0.0))
+  prev = u2 * 1.0
+print(repeats)
+
+fn dloss(w):
+  mean(dropout(w, 0.25) * w)
+
+g = grad(dloss, zeros(64) + 2.0)
+print(where(sum(g * g) > 0.0, 1.0, 0.0))
+```
+
+Output:
+
+```
+1 : f32
+1 : f32
+1 : f32
+1 : f32
+0 : f32
+1 : f32
+```
+
 ## records
 
 ```python

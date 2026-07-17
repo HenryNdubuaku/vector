@@ -24,6 +24,7 @@ struct Session {
     modules: HashMap<String, ModuleDecl>,
     env: HashMap<String, SessionVal>,
     rng: u64,
+    rng_sites: usize,
 }
 
 pub fn run_repl() {
@@ -34,6 +35,7 @@ pub fn run_repl() {
         modules,
         env: HashMap::new(),
         rng: 0x243F6A8885A308D3,
+        rng_sites: 0,
     };
     let stdin = io::stdin();
     let tty = stdin.is_terminal();
@@ -132,6 +134,10 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         modules: session.modules.clone(),
         statics: Vec::new(),
         rng: session.rng,
+        rng_sites: session.rng_sites,
+        rng_baked: false,
+        seed: None,
+        loop_counters: Vec::new(),
         claimed: HashSet::new(),
         region_depth: 0,
         grad_depth: 0,
@@ -202,6 +208,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
                     shape: tracer.nodes[*id].shape.clone(),
                     dtype: tracer.nodes[*id].dtype,
                 }),
+                InputSource::Seed => crate::npy::seed_host_buffer(),
                 InputSource::Live(key) => feed_map[key].to_host_buffer(),
             })
             .collect();
@@ -249,6 +256,7 @@ fn eval_chunk(session: &mut Session, chunk: &str) {
         session.env.insert(name.clone(), sv);
     }
     session.rng = tracer.rng;
+    session.rng_sites = tracer.rng_sites;
 }
 
 enum Meta {

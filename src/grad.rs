@@ -32,7 +32,8 @@ impl Tracer {
         let out = self.val(id);
         let ins: Vec<Val> = node.inputs.iter().map(|&i| self.val(i)).collect();
         match &node.kind {
-            OpKind::Input | OpKind::Iota | OpKind::IterArg | OpKind::Constant(_) | OpKind::DenseConst(_) | OpKind::Compare(_) => vec![],
+            OpKind::Input | OpKind::Iota | OpKind::IterArg | OpKind::Constant(_) | OpKind::DenseConst(_) | OpKind::Compare(_) | OpKind::RngBits => vec![],
+            OpKind::Proj(_) if matches!(self.nodes[node.inputs[0]].kind, OpKind::RngBits) => vec![],
             OpKind::While { .. } | OpKind::Proj(_) => {
                 die("differentiating across a for loop isn't supported; take gradients inside the loop body")
             }
@@ -124,7 +125,10 @@ impl Tracer {
                 };
                 vec![(ins[0].id, da)]
             }
-            OpKind::Convert => vec![(ins[0].id, self.convert(g, ins[0].dtype))],
+            OpKind::Convert => match ins[0].dtype {
+                Dtype::I1 | Dtype::I32 | Dtype::I64 | Dtype::U32 | Dtype::U64 => vec![],
+                _ => vec![(ins[0].id, self.convert(g, ins[0].dtype))],
+            },
             OpKind::Broadcast(dims) => {
                 let axes: Vec<usize> = (0..node.shape.len()).filter(|d| !dims.contains(d)).collect();
                 let da = self.reduce_sum(g, &axes);

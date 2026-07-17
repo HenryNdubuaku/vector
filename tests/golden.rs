@@ -484,6 +484,39 @@ fn url_without_format_fails_loud() {
 }
 
 #[test]
+fn rng_varies_by_run_and_pins_by_seed() {
+    let path = std::env::temp_dir().join("vector_rng_seed.vec");
+    fs::write(&path, "print(uniform(16))\nprint(sample([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]))\n").unwrap();
+    let run = |seed: Option<&str>| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_vector"));
+        cmd.arg(path.to_str().unwrap());
+        if let Some(s) = seed {
+            cmd.env("VECTOR_SEED", s);
+        }
+        let out = cmd.output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert_ne!(run(None), run(None), "unseeded runs should differ");
+    assert_eq!(run(Some("42")), run(Some("42")), "seeded runs should match");
+    assert_ne!(run(Some("1")), run(Some("2")), "different seeds should differ");
+}
+
+#[test]
+fn export_drops_dropout_and_bakes_rng() {
+    fs::create_dir_all("tests/cases/data").unwrap();
+    let out = run_vector_src("vector_export_rng.vec", &format!(
+        "{}m = Scale(2)\nexport(m, \"tests/cases/data/rng_export.mlir\", [1.0, 2.0])\nprint(m.s)\n",
+        "module Scale(k):\n  s = 0.0 + k\n  forward(self, x):\n    dropout(self.s * x, 0.5)\n\n"));
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let mlir = fs::read_to_string("tests/cases/data/rng_export.mlir").unwrap();
+    assert!(!mlir.contains("rng_bit_generator"), "exported dropout should be identity:\n{}", mlir);
+    assert_eq!(mlir.matches("%").count() > 0, true);
+    let params = mlir.lines().find(|l| l.contains("@main")).unwrap().matches("tensor").count();
+    assert!(params >= 2, "{}", mlir);
+}
+
+#[test]
 fn wav_load_decodes_reference_files() {
     let out = run_vector_src("vector_wav_load.vec",
         "a = load(\"tests/fixtures/mono16.wav\")\nprint(a.samples * 32768.0)\nprint(a.rate)\ns = load(\"tests/fixtures/stereo8.wav\")\nprint(s.samples * 128.0)\nt = load(\"tests/fixtures/mono24.wav\")\nprint(t.samples)\n");

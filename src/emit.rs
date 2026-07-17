@@ -40,6 +40,7 @@ fn val_name(id: usize, nodes: &[Node]) -> String {
             let count = match &nodes[w].kind {
                 OpKind::While { iter_args, .. } => iter_args.len(),
                 OpKind::Sort { num, .. } => *num,
+                OpKind::RngBits => 2,
                 _ => unreachable!("Proj of a single-result node"),
             };
             if count == 1 { format!("%{}", w) } else { format!("%{}#{}", w, k) }
@@ -60,6 +61,7 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
         OpKind::While { .. } => unreachable!("while is emitted by the region writer"),
         OpKind::Sort { .. } => unreachable!("sort is emitted by the region writer"),
         OpKind::Scatter => unreachable!("scatter is emitted by the region writer"),
+        OpKind::RngBits => unreachable!("rng is emitted by the region writer"),
         OpKind::Gather => {
             let operand = &nodes[node.inputs[0]].shape;
             let offsets = if operand.len() > 1 {
@@ -77,7 +79,8 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
         OpKind::Iota => format!("stablehlo.iota dim = 0 : {}", out),
         OpKind::Constant(n) => {
             let lit = match node.dtype {
-                Dtype::I64 => format!("{}", *n as i64),
+                Dtype::I32 | Dtype::I64 => format!("{}", *n as i64),
+                Dtype::U32 | Dtype::U64 => format!("{}", *n as u64),
                 Dtype::F32 if !n.is_finite() => format!("0x{:08X}", (*n as f32).to_bits()),
                 _ => mlir_float(*n),
             };
@@ -237,6 +240,16 @@ fn write_scatter(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
     ));
 }
 
+fn write_rng(s: &mut String, id: usize, nodes: &[Node], indent: usize) {
+    let node = &nodes[id];
+    let state = tensor_type(&nodes[node.inputs[0]].shape, nodes[node.inputs[0]].dtype);
+    let bits = tensor_type(&node.shape, node.dtype);
+    s.push_str(&format!(
+        "{}%{}:2 = \"stablehlo.rng_bit_generator\"({}) {{rng_algorithm = #stablehlo<rng_algorithm DEFAULT>}} : ({}) -> ({}, {})\n",
+        " ".repeat(indent), id, val_name(node.inputs[0], nodes), state, state, bits
+    ));
+}
+
 fn write_region(s: &mut String, ids: &[usize], nodes: &[Node], indent: usize) {
     for &id in ids {
         match &nodes[id].kind {
@@ -244,6 +257,7 @@ fn write_region(s: &mut String, ids: &[usize], nodes: &[Node], indent: usize) {
             OpKind::While { .. } => write_while(s, id, nodes, indent),
             OpKind::Sort { .. } => write_sort(s, id, nodes, indent),
             OpKind::Scatter => write_scatter(s, id, nodes, indent),
+            OpKind::RngBits => write_rng(s, id, nodes, indent),
             _ => {
                 s.push_str(&" ".repeat(indent));
                 s.push_str(&format!("%{} = {}\n", id, node_text(&nodes[id], nodes)));

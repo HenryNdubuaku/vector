@@ -434,6 +434,59 @@ impl Tracer {
                 self.plan_play(&v);
                 v
             }
+            "uniform" => {
+                if args.is_empty() {
+                    die("uniform expects dimension literals");
+                }
+                let dims: Vec<usize> = args.iter().map(|a| self.int_lit(a, env, "dimension")).collect();
+                let val = self.rng_uniform(&dims);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
+            "dropout" => {
+                if args.len() != 2 {
+                    die(&format!("dropout expects (x, rate), got {} args", args.len()));
+                }
+                let x = self.trace(&args[0], env, fns).tensor("dropout");
+                let rate = self.num_lit(&args[1], env, "dropout rate");
+                if !(0.0..1.0).contains(&rate) {
+                    die(&format!("dropout rate must be in [0, 1), got {}", rate));
+                }
+                if self.rng_baked {
+                    return TVal::Tensor(x);
+                }
+                let u = self.rng_uniform(&x.val.shape.clone());
+                let rate_c = self.constant(rate, Dtype::F32);
+                let rate_b = self.broadcast(&rate_c, &u.shape.clone());
+                let keep = self.compare("GE", &u, &rate_b);
+                let scale = self.constant(1.0 / (1.0 - rate), x.val.dtype);
+                let scaled = self.ewise("multiply", x.val.clone(), scale);
+                let zero = self.zeros_like(&scaled);
+                let val = self.select(&keep, &scaled, &zero);
+                TVal::Tensor(BVal { val, bdims: x.bdims })
+            }
+            "sample" => {
+                if args.len() != 1 {
+                    die(&format!("sample expects 1 arg (logits), got {}", args.len()));
+                }
+                let logits = self.trace(&args[0], env, fns).tensor("sample");
+                if per_shape(&logits).len() != 1 {
+                    die(&format!("sample expects a logits vector, got shape {:?} (use vmap for batches)", per_shape(&logits)));
+                }
+                let shape = logits.val.shape.clone();
+                let u = self.rng_uniform(&shape);
+                let lo = self.constant(1e-7, Dtype::F32);
+                let lo_b = self.broadcast(&lo, &shape);
+                let hi = self.constant(1.0 - 1e-7, Dtype::F32);
+                let hi_b = self.broadcast(&hi, &shape);
+                let u = self.ewise("maximum", u, lo_b);
+                let u = self.ewise("minimum", u, hi_b);
+                let inner = self.unary("log", &u);
+                let neg = self.unary("negate", &inner);
+                let outer = self.unary("log", &neg);
+                let gumbel = self.unary("negate", &outer);
+                let noisy = self.ewise("add", logits.val.clone(), gumbel);
+                self.arg_extreme(BVal { val: noisy, bdims: logits.bdims }, true)
+            }
             "sort" | "argsort" | "argmax" | "argmin" | "cumsum" => {
                 if args.len() != 1 {
                     die(&format!("{} expects 1 arg, got {}", name, args.len()));

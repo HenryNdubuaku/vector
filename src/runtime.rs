@@ -113,6 +113,9 @@ impl Engine {
         let flags = std::env::var("XLA_FLAGS").unwrap_or_default();
         let keyed = format!("{}\n{:?}\n{}\n{}", self.plugin_path, self.api.version(), flags, mlir);
         let cacheable = !self.plugin_path.contains("metal");
+        if !cacheable && mlir.contains("rng_bit_generator") {
+            die("random ops (uniform, dropout, sample) aren't supported by the metal plugin yet; run on the cpu");
+        }
         let muffle = Muffle::engage();
         let cached = if cacheable { load_cached(&self.client, &keyed) } else { None };
         let executable = match cached {
@@ -291,9 +294,14 @@ fn host_tensor(h: HostBuffer) -> Tensor {
     }
 }
 
-pub fn execute(mlir: &str, specs: &[InputSpec]) -> Vec<Tensor> {
+pub fn execute(mlir: &str, specs: &[Option<InputSpec>]) -> Vec<Tensor> {
     let engine = Engine::new();
-    let feeds: Vec<HostBuffer> = specs.iter().map(input_host_buffer).collect();
+    let feeds: Vec<HostBuffer> = specs.iter()
+        .map(|spec| match spec {
+            Some(spec) => input_host_buffer(spec),
+            None => crate::npy::seed_host_buffer(),
+        })
+        .collect();
     engine.execute(mlir, feeds)
 }
 

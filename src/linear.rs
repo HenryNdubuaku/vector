@@ -37,6 +37,9 @@ fn std(x):
 
 fn norm(x):
   sqrt(sum(x * x))
+
+fn permutation(n):
+  argsort(uniform(n))
 ";
 
 pub fn stdlib() -> (HashMap<String, crate::parser::Decl>, HashMap<String, ModuleDecl>) {

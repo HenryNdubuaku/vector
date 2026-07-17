@@ -14,21 +14,21 @@ targets = sin(inputs)
 eval_inputs = reshape(linspace(-pi, pi, 9), 9, 1)
 eval_targets = sin(eval_inputs)
 
-batches_x = transpose(reshape(reshape(inputs, n), batch_size, batches))
-batches_t = transpose(reshape(reshape(targets, n), batch_size, batches))
-
-fn train_epoch(model, bx, bt, lr, batch, batches):
+fn train_epoch(model, inputs, targets, lr, n, batch, batches):
   m = model
+  perm = permutation(n)
+  xs = take(inputs, perm)
+  ts = take(targets, perm)
   for step in 0..batches:
-    x = reshape(take(bx, step), batch, 1)
-    t = reshape(take(bt, step), batch, 1)
+    x = slice(xs, step * batch, batch)
+    t = slice(ts, step * batch, batch)
     m = m - lr * grad(m.loss, x, t)
   m
 
 model = Mlp(hidden_size)
 
 for epoch in 0..epochs:
-  model = train_epoch(model, batches_x, batches_t, learning_rate, batch_size, batches)
+  model = train_epoch(model, inputs, targets, learning_rate, n, batch_size, batches)
   print(model.loss(inputs, targets))
 
 save(model, "mlp.safetensors")

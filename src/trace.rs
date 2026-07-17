@@ -35,6 +35,10 @@ pub struct Tracer {
     pub modules: HashMap<String, ModuleDecl>,
     pub statics: Vec<HashMap<String, f64>>,
     pub rng: u64,
+    pub rng_sites: usize,
+    pub rng_baked: bool,
+    pub seed: Option<Val>,
+    pub loop_counters: Vec<(Val, usize)>,
     pub claimed: HashSet<usize>,
     pub region_depth: usize,
     pub grad_depth: usize,
@@ -43,7 +47,7 @@ pub struct Tracer {
 
 impl Tracer {
     pub fn emit(&mut self, kind: OpKind, inputs: Vec<usize>, shape: Vec<usize>, dtype: Dtype) -> Val {
-        let internable = !matches!(kind, OpKind::Input | OpKind::IterArg | OpKind::Proj(_) | OpKind::Barrier | OpKind::While { .. } | OpKind::Sort { .. });
+        let internable = !matches!(kind, OpKind::Input | OpKind::IterArg | OpKind::Proj(_) | OpKind::Barrier | OpKind::While { .. } | OpKind::Sort { .. } | OpKind::RngBits);
         if internable {
             let key = format!("{:?}|{:?}|{:?}|{:?}", kind, inputs, shape, dtype);
             for frame in self.interned.iter().rev() {
@@ -363,12 +367,14 @@ impl Tracer {
 
                 let outer_prints = std::mem::take(&mut self.loop_prints);
                 self.region_depth += 1;
+                self.loop_counters.push((counter_arg.clone(), iterations));
                 for (name, stmt) in stmts {
                     let v = self.trace(stmt, &env2, fns);
                     if let Some(name) = name {
                         env2.insert(name.clone(), v);
                     }
                 }
+                self.loop_counters.pop();
                 self.region_depth -= 1;
                 let my_prints = std::mem::take(&mut self.loop_prints);
                 if !my_prints.is_empty() && self.region_depth > 0 {
@@ -516,5 +522,49 @@ impl Tracer {
         let u1 = ((self.next_u64() >> 11) as f64 / (1u64 << 53) as f64).max(1e-12);
         let u2 = (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64;
         (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+    }
+
+    fn seed_val(&mut self) -> Val {
+        if let Some(seed) = &self.seed {
+            return seed.clone();
+        }
+        let seed = if self.rng_baked {
+            let n = (self.next_u64() >> 40) as f64;
+            self.constant(n, Dtype::F32)
+        } else {
+            let val = self.emit(OpKind::Input, vec![], vec![], Dtype::F32);
+            self.inputs.push((InputSource::Seed, val.id));
+            val
+        };
+        self.seed = Some(seed.clone());
+        seed
+    }
+
+    pub fn rng_uniform(&mut self, shape: &[usize]) -> Val {
+        let seed = self.seed_val();
+        self.rng_sites += 1;
+        let site = self.constant(self.rng_sites as f64, Dtype::I64);
+        let seed_i = self.convert(&seed, Dtype::I64);
+        let s0 = self.ewise("add", seed_i, site);
+        let mut ctr = self.constant(0.0, Dtype::I64);
+        for (counter, trips) in self.loop_counters.clone() {
+            let radix = self.constant(trips as f64, Dtype::I64);
+            let scaled = self.ewise("multiply", ctr, radix);
+            ctr = self.ewise("add", scaled, counter);
+        }
+        let s0 = self.convert(&s0, Dtype::U64);
+        let s1 = self.convert(&ctr, Dtype::U64);
+        let s0 = self.reshape(&s0, vec![1]);
+        let s1 = self.reshape(&s1, vec![1]);
+        let state = self.emit(OpKind::Concat(0), vec![s0.id, s1.id], vec![2], Dtype::U64);
+        let bits_shape = if shape.is_empty() { vec![1] } else { shape.to_vec() };
+        let rng = self.emit(OpKind::RngBits, vec![state.id], bits_shape.clone(), Dtype::I32);
+        let bits = self.emit(OpKind::Proj(1), vec![rng.id], bits_shape.clone(), Dtype::I32);
+        let f = self.convert(&bits, Dtype::F32);
+        let scale = self.constant(1.0 / 4294967296.0, Dtype::F32);
+        let scaled = self.ewise("multiply", f, scale);
+        let whole = self.unary("floor", &scaled);
+        let u = self.ewise("subtract", scaled, whole);
+        if shape.is_empty() { self.reshape(&u, vec![]) } else { u }
     }
 }

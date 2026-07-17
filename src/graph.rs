@@ -1,7 +1,7 @@
 use crate::die;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Dtype { F32, F64, I1, I64 }
+pub enum Dtype { F32, F64, I1, I32, I64, U32, U64 }
 
 impl Dtype {
     pub fn name(self) -> &'static str {
@@ -9,7 +9,10 @@ impl Dtype {
             Dtype::F32 => "f32",
             Dtype::F64 => "f64",
             Dtype::I1 => "i1",
+            Dtype::I32 => "i32",
             Dtype::I64 => "i64",
+            Dtype::U32 => "ui32",
+            Dtype::U64 => "ui64",
         }
     }
 }
@@ -38,6 +41,7 @@ pub enum InputSource {
     Csv(String, String),
     Image(String),
     Audio(String),
+    Seed,
     Live(String),
 }
 
@@ -93,6 +97,7 @@ pub enum OpKind {
     Sort { axis: usize, num: usize },
     Gather,
     Scatter,
+    RngBits,
     Concat(usize),
     Slice(usize, usize, usize),
     DynSlice(Vec<usize>),

@@ -118,7 +118,7 @@ fn plugin_path() -> String {
     die("no PJRT plugin found; run `vector setup` or set PJRT_PLUGIN_PATH");
 }
 
-fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<PrintSpec>, Vec<SaveSpec>, Vec<ExportSpec>, Vec<FigureSpec>, Vec<SaveSpec>) {
+fn compile(path: &str) -> (String, Vec<Option<InputSpec>>, Vec<PrintSpec>, Vec<SaveSpec>, Vec<ExportSpec>, Vec<FigureSpec>, Vec<SaveSpec>) {
     let src = fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("cannot read file: {}", e)));
     let lexed = lex(&src);
@@ -158,6 +158,10 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<PrintSpec>, Vec<SaveSpec>
         modules,
         statics: Vec::new(),
         rng: 0x243F6A8885A308D3,
+        rng_sites: 0,
+        rng_baked: false,
+        seed: None,
+        loop_counters: Vec::new(),
         claimed: std::collections::HashSet::new(),
         region_depth: 0,
         grad_depth: 0,
@@ -185,20 +189,21 @@ fn compile(path: &str) -> (String, Vec<InputSpec>, Vec<PrintSpec>, Vec<SaveSpec>
         outputs.extend(spec.vals.iter().cloned());
     }
     let prints = tracer.prints.clone();
-    let specs: Vec<InputSpec> = tracer.inputs.iter()
+    let specs: Vec<Option<InputSpec>> = tracer.inputs.iter()
         .map(|(src, id)| match src {
-            graph::InputSource::Npy(path) | graph::InputSource::Image(path) | graph::InputSource::Audio(path) => InputSpec {
+            graph::InputSource::Npy(path) | graph::InputSource::Image(path) | graph::InputSource::Audio(path) => Some(InputSpec {
                 path: path.clone(),
                 entry: None,
                 shape: tracer.nodes[*id].shape.clone(),
                 dtype: tracer.nodes[*id].dtype,
-            },
-            graph::InputSource::Safetensors(path, name) | graph::InputSource::Csv(path, name) => InputSpec {
+            }),
+            graph::InputSource::Safetensors(path, name) | graph::InputSource::Csv(path, name) => Some(InputSpec {
                 path: path.clone(),
                 entry: Some(name.clone()),
                 shape: tracer.nodes[*id].shape.clone(),
                 dtype: tracer.nodes[*id].dtype,
-            },
+            }),
+            graph::InputSource::Seed => None,
             graph::InputSource::Live(_) => die("internal: live input outside the repl"),
         })
         .collect();
