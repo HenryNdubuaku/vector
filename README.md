@@ -14,9 +14,9 @@ Vector brings JAX-level speed across the entire program with Pythonic-syntax and
 
 | Device                    | Vector    | JAX        | PyTorch (eager) | PyTorch (compiled) |
 | ------------------------- | --------- | ---------- | --------------- | ------------------ |
-| Apple M5 Max GPU (Metal)  | **0.27s** | —          | 0.32s           | 0.30s              |
+| Apple M5 Max GPU          | **0.27s** | —          | 0.32s           | 0.30s              |
 | NVIDIA RTX 4000 Ada       | **0.09s** | **0.09s**  | 0.29s           | 0.25s              |
-| Google TPU                | **0.01s** | **0.01s**  | —               | —                  |
+| Google TPU v6e            | **0.01s** | **0.01s**  | —               | —                  |
 | Apple M5 Max CPU (ARM)    | **1.51s** | 1.62s      | 2.11s           | 2.15s              |
 | GPU-box CPU (x86)         | 7.60s     | **6.90s**  | 13.50s          | 14.81s             |
 
