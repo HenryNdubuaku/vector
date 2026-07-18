@@ -47,7 +47,8 @@ const USAGE: &str = "usage: vector [file.vec]
   vector benchmark [steps]      the same run, benchmark-sized (200 steps), with the config printed
   vector version                print version
 
-  --accelerate                  run on the machine's accelerator (gpu/tpu); programs run on the cpu by default
+  --cpu                         force the cpu; programs run on the machine's accelerator (gpu/tpu) by default
+  --accelerate                  require the accelerator: die instead of falling back to the cpu
 
   set VECTOR_LOGS=1 to see the XLA runtime logs vector hides by default";
 
@@ -111,6 +112,11 @@ fn plugin_path() -> String {
             die(&format!("no {} plugin at {}; run `vector setup {}`", backend, path, backend));
         }
         return path;
+    }
+    if let Some(found) = installed_accelerator() {
+        let _ = FLAG_BACKEND.set(found);
+        eprintln!("running on {} (force the cpu with --cpu)", found);
+        return backend_path(found);
     }
     let path = backend_path("cpu");
     if fs::metadata(&path).is_ok() {
@@ -435,13 +441,11 @@ fn setup_auto() {
 }
 
 fn report_default() {
-    if fs::metadata(backend_path("cpu")).is_ok() {
-        println!("programs run on the cpu; add --accelerate to use the gpu/tpu");
-    } else {
+    if fs::metadata(backend_path("cpu")).is_err() {
         println!("no cpu plugin installed; run `vector setup`");
     }
     if let Some(b) = installed_accelerator() {
-        println!("--accelerate will run on: {}", b);
+        println!("programs run on: {} (force the cpu with --cpu)", b);
         let missing = runtime::missing_libs(&backend_path(b));
         if !missing.is_empty() {
             println!("warning: {} won't load until its libraries are installed:{}", b, missing);
@@ -551,9 +555,12 @@ fn main() {
     }
     let mut args: Vec<String> = env::args().collect();
     let accelerate = args.iter().any(|a| a == "--accelerate");
-    args.retain(|a| a != "--accelerate");
+    let cpu = args.iter().any(|a| a == "--cpu");
+    args.retain(|a| a != "--accelerate" && a != "--cpu");
     let outcome = std::panic::catch_unwind(|| {
-        if accelerate {
+        if cpu {
+            let _ = FLAG_BACKEND.set("cpu");
+        } else if accelerate {
             engage_accelerator();
         }
         match args.get(1).map(String::as_str) {

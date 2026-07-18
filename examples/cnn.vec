@@ -8,7 +8,7 @@ bins = 64
 classes = 10
 batch_size = 32
 learning_rate = 0.001
-rounds = 15
+epochs = 15
 chunk_steps = 150
 n_train = 2700
 
@@ -62,7 +62,7 @@ function train_chunk(state, clips, labels, lr, count, steps, total):
 
 state = adam_init(Cnn(frames, frame_len, bins, classes))
 
-for round in 0..rounds:
+for round in 0..epochs:
   state = train_chunk(state, train_x, train_y, learning_rate, batch_size, chunk_steps, 2250.0)
   print(mean(where(vmap(predict, state.p, test_x) == test_y, 1.0, 0.0)))
 

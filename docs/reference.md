@@ -127,7 +127,8 @@ vector serve <m.mlir> [port]  serve an exported model over http
 vector setup                  detect this machine and install the right backends
 vector version                print version
 
---accelerate                  run on the machine's accelerator (gpu/tpu); cpu is the default
+--cpu                         force the cpu; programs run on the machine's accelerator (gpu/tpu) by default
+--accelerate                  require the accelerator: die instead of falling back to the cpu
 ```
 
 Environment: `VECTOR_BACKEND=<name>` pins a backend, `PJRT_PLUGIN_PATH` overrides the plugin, `XLA_FLAGS` passes through to XLA, `VECTOR_LOGS=1` shows the runtime logs vector hides, `VECTOR_SEED=<n>` pins the run-time randomness.

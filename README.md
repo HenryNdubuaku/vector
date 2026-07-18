@@ -14,12 +14,11 @@ Vector brings JAX-level speed across the entire program with Pythonic-syntax and
 
 | Device                    | Vector    | JAX        | PyTorch (eager) | PyTorch (compiled) |
 | ------------------------- | --------- | ---------- | --------------- | ------------------ |
-| Apple M5 Max CPU (ARM)    | **1.51s** | 1.62s      | 2.11s           | 2.15s              |
 | Apple M5 Max GPU (Metal)  | **0.27s** | —          | 0.32s           | 0.30s              |
-| GPU-box CPU (x86)         | 7.60s     | **6.90s**  | 13.50s          | 14.81s             |
 | NVIDIA RTX 4000 Ada       | **0.09s** | **0.09s**  | 0.29s           | 0.25s              |
-| TPU-VM CPU (x86)          | **1.70s** | 3.46s      | —               | —                  |
 | Google TPU                | **0.01s** | **0.01s**  | —               | —                  |
+| Apple M5 Max CPU (ARM)    | **1.51s** | 1.62s      | 2.11s           | 2.15s              |
+| GPU-box CPU (x86)         | 7.60s     | **6.90s**  | 13.50s          | 14.81s             |
 
 ## Overview
 
@@ -151,9 +150,9 @@ vector test
 vector filename.vec
 ```
 
-Programs run on the CPU by default; add `--accelerate` to run on the machine's GPU or TPU:
+Programs run on the machine's GPU or TPU automatically; add `--cpu` to force the CPU:
 ```sh
-vector filename.vec --accelerate
+vector filename.vec --cpu
 ```
 
 **4. Read more**: [docs/reference.md](docs/reference.md) covers the whole language; the [examples](examples/) train a GPT on Shakespeare and a vision transformer on MNIST, each in about a hundred lines.

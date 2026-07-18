@@ -2,7 +2,7 @@ use std::fs;
 use std::process::Command;
 
 fn run_vector(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_vector")).args(args).output().unwrap()
+    Command::new(env!("CARGO_BIN_EXE_vector")).args(args).arg("--cpu").output().unwrap()
 }
 
 fn npy_bytes(descr: &str, shape: &str, data: &[u8]) -> Vec<u8> {
@@ -683,6 +683,7 @@ fn run_repl_script(script: &str) -> (String, String) {
     use std::io::Write;
     use std::process::Stdio;
     let mut child = Command::new(env!("CARGO_BIN_EXE_vector"))
+        .arg("--cpu")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
