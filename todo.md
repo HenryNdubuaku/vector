@@ -49,7 +49,7 @@ The biggest raw lever left on accelerators (2–4x matmul throughput); whole-gra
 - [ ] Validate on the GPT demo: bf16-vs-f32 loss curves agree, measure the speedup per backend
 
 ## 7. Convolutions and vision
-The one op-family gap that closes off a whole domain; everything else in vision is composition.
+The one op-family gap that closes off a whole domain; everything else in vision is composition. Already landed on the way: examples/vit.vec (mnist vision transformer, ~95% test accuracy in ~15s cpu — patchify is reshape+transpose, no convs needed) and `.gz` idx loading (the mnist files, decoded by the PNG codec's inflate).
 - [ ] conv(x, kernel, stride, padding) → stablehlo.convolution; VJP = transposed conv (both directions needed for training)
 - [ ] max_pool / avg_pool → stablehlo.reduce_window; max_pool VJP = select_and_scatter
 - [ ] pad(x, ...) builtin (convs and sequence work both need it)

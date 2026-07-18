@@ -503,6 +503,23 @@ Output:
 1 : f32
 ```
 
+## gz
+
+```python
+x = load("tests/cases/data/tiny.gz")
+print(len(x))
+print(x)
+print(sum(x))
+```
+
+Output:
+
+```
+2 : f32
+[[[0, 1], [2, 3]], [[4, 5], [6, 7]]] : f32
+28 : f32
+```
+
 ## index
 
 ```python

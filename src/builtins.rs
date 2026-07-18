@@ -390,36 +390,44 @@ impl Tracer {
                     die(&format!("{} expects at least 2 args, got {}", name, args.len()));
                 }
                 let parts: Vec<BVal> = args.iter().map(|a| self.trace(a, env, fns).tensor(name)).collect();
-                if parts.iter().any(|p| p.bdims != 0) {
-                    die(&format!("{} inside vmap isn't supported yet", name));
-                }
                 let dtype = parts[0].val.dtype;
                 if parts.iter().any(|p| p.val.dtype != dtype) {
                     die(&format!("{} expects matching dtypes", name));
                 }
+                let k = parts.iter().map(|p| p.bdims).max().unwrap();
+                let prefix: Vec<usize> = parts.iter()
+                    .find(|p| p.bdims == k)
+                    .map(|p| p.val.shape[..k].to_vec())
+                    .unwrap();
                 let vals: Vec<Val> = if name == "stack" {
-                    if parts.iter().any(|p| p.val.shape != parts[0].val.shape) {
+                    if parts.iter().any(|p| per_shape(p) != per_shape(&parts[0])) {
                         die("stack expects matching shapes");
                     }
                     parts.iter().map(|p| {
-                        let mut shape = vec![1];
-                        shape.extend(&p.val.shape);
-                        self.reshape(&p.val, shape)
+                        let per = per_shape(p);
+                        let aligned = self.align(p, &prefix, &per);
+                        let mut shape = prefix.clone();
+                        shape.push(1);
+                        shape.extend(&per);
+                        self.reshape(&aligned, shape)
                     }).collect()
                 } else {
-                    if parts.iter().any(|p| p.val.shape.is_empty()) {
+                    if parts.iter().any(|p| per_shape(p).is_empty()) {
                         die("concat expects rank >= 1; stack scalars instead");
                     }
-                    if parts.iter().any(|p| p.val.shape[1..] != parts[0].val.shape[1..]) {
+                    if parts.iter().any(|p| per_shape(p)[1..] != per_shape(&parts[0])[1..]) {
                         die("concat expects matching trailing dimensions");
                     }
-                    parts.iter().map(|p| p.val.clone()).collect()
+                    parts.iter().map(|p| {
+                        let per = per_shape(p);
+                        self.align(p, &prefix, &per)
+                    }).collect()
                 };
                 let mut shape = vals[0].shape.clone();
-                shape[0] = vals.iter().map(|v| v.shape[0]).sum();
+                shape[k] = vals.iter().map(|v| v.shape[k]).sum();
                 let inputs: Vec<usize> = vals.iter().map(|v| v.id).collect();
-                let val = self.emit(OpKind::Concat(0), inputs, shape, dtype);
-                TVal::Tensor(BVal { val, bdims: 0 })
+                let val = self.emit(OpKind::Concat(k), inputs, shape, dtype);
+                TVal::Tensor(BVal { val, bdims: k })
             }
             "save" => {
                 if args.len() != 2 {
@@ -532,6 +540,16 @@ impl Tracer {
                     let n = crate::text::txt_len(&path);
                     let val = self.emit(OpKind::Input, vec![], vec![n], Dtype::F32);
                     self.inputs.push((InputSource::Text(path), val.id));
+                    return TVal::Tensor(BVal { val, bdims: 0 });
+                }
+                if path.ends_with(".gz") {
+                    if let Some(&(_, id)) = self.inputs.iter()
+                        .find(|(src, _)| matches!(src, InputSource::Npy(p) if *p == path)) {
+                        return TVal::Tensor(BVal { val: self.val(id), bdims: 0 });
+                    }
+                    let shape = crate::npy::idx_meta(&path);
+                    let val = self.emit(OpKind::Input, vec![], shape, Dtype::F32);
+                    self.inputs.push((InputSource::Npy(path), val.id));
                     return TVal::Tensor(BVal { val, bdims: 0 });
                 }
                 if let Some(&(_, id)) = self.inputs.iter()

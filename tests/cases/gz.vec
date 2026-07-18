@@ -1,0 +1,4 @@
+x = load("tests/cases/data/tiny.gz")
+print(len(x))
+print(x)
+print(sum(x))

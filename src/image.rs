@@ -205,7 +205,38 @@ pub fn inflate(data: &[u8], path: &str) -> Vec<u8> {
     if data.len() < 6 || data[0] & 0x0F != 8 {
         die(&format!("{} has an unsupported zlib stream", path));
     }
-    let mut b = Bits { data, pos: 2, bit: 0, path };
+    inflate_from(data, 2, path)
+}
+
+pub fn gunzip(data: &[u8], path: &str) -> Vec<u8> {
+    if data.len() < 18 || data[0] != 0x1F || data[1] != 0x8B || data[2] != 8 {
+        die(&format!("{} is not a gzip file", path));
+    }
+    let flags = data[3];
+    let mut pos = 10;
+    if flags & 4 != 0 {
+        let extra = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
+        pos += 2 + extra;
+    }
+    for flag in [8, 16] {
+        if flags & flag != 0 {
+            while pos < data.len() && data[pos] != 0 {
+                pos += 1;
+            }
+            pos += 1;
+        }
+    }
+    if flags & 2 != 0 {
+        pos += 2;
+    }
+    if pos >= data.len() {
+        die(&format!("{} is truncated", path));
+    }
+    inflate_from(data, pos, path)
+}
+
+fn inflate_from(data: &[u8], start: usize, path: &str) -> Vec<u8> {
+    let mut b = Bits { data, pos: start, bit: 0, path };
     let mut out = Vec::new();
     loop {
         let last = b.bits(1);

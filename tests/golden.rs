@@ -17,8 +17,33 @@ fn npy_bytes(descr: &str, shape: &str, data: &[u8]) -> Vec<u8> {
     bytes
 }
 
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFFFFFFu32;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB88320 } else { crc >> 1 };
+        }
+    }
+    !crc
+}
+
+fn gzip_stored(payload: &[u8]) -> Vec<u8> {
+    let mut out = vec![0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 3];
+    out.push(1);
+    out.extend((payload.len() as u16).to_le_bytes());
+    out.extend((!(payload.len() as u16)).to_le_bytes());
+    out.extend(payload);
+    out.extend(crc32(payload).to_le_bytes());
+    out.extend((payload.len() as u32).to_le_bytes());
+    out
+}
+
 fn write_fixtures() {
     fs::create_dir_all("tests/cases/data").unwrap();
+    let mut idx = vec![0, 0, 0x08, 3, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2];
+    idx.extend(0..8u8);
+    fs::write("tests/cases/data/tiny.gz", gzip_stored(&idx)).unwrap();
     let m: Vec<u8> = [1.5f32, 2.5, 3.5, 4.5].iter().flat_map(|x| x.to_le_bytes()).collect();
     fs::write("tests/cases/data/m.npy", npy_bytes("<f4", "(2, 2)", &m)).unwrap();
     let v: Vec<u8> = [3.0f64, 4.0].iter().flat_map(|x| x.to_le_bytes()).collect();

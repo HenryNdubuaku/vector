@@ -80,6 +80,57 @@ pub fn host_buffer(dtype: Dtype, shape: &[usize], data: &[u8]) -> HostBuffer {
     }
 }
 
+static IDX: std::sync::Mutex<Vec<(String, std::time::SystemTime, std::sync::Arc<(Vec<usize>, Vec<f32>)>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn idx_data(path: &str) -> std::sync::Arc<(Vec<usize>, Vec<f32>)> {
+    let mtime = fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or_else(|e| die(&format!("cannot open {}: {}", path, e)));
+    let mut cache = IDX.lock().unwrap();
+    if let Some((_, t, data)) = cache.iter().find(|(p, _, _)| p == path) {
+        if *t == mtime {
+            return data.clone();
+        }
+    }
+    let raw = fs::read(path)
+        .unwrap_or_else(|e| die(&format!("cannot read {}: {}", path, e)));
+    let bytes = crate::image::gunzip(&raw, path);
+    if bytes.len() < 4 || bytes[0] != 0 || bytes[1] != 0 || bytes[2] != 0x08 {
+        die(&format!("{} is not an idx file of bytes (the mnist format)", path));
+    }
+    let ndims = bytes[3] as usize;
+    let header = 4 + 4 * ndims;
+    if ndims == 0 || bytes.len() < header {
+        die(&format!("{} has a malformed idx header", path));
+    }
+    let shape: Vec<usize> = (0..ndims)
+        .map(|d| u32::from_be_bytes(bytes[4 + 4 * d..8 + 4 * d].try_into().unwrap()) as usize)
+        .collect();
+    let count: usize = shape.iter().product();
+    if bytes.len() != header + count {
+        die(&format!("{} is truncated: {} values for shape {:?}", path, bytes.len() - header, shape));
+    }
+    let vals: Vec<f32> = bytes[header..].iter().map(|&b| b as f32).collect();
+    let data = std::sync::Arc::new((shape, vals));
+    cache.retain(|(p, _, _)| p != path);
+    cache.push((path.to_string(), mtime, data.clone()));
+    data
+}
+
+pub fn idx_meta(path: &str) -> Vec<usize> {
+    idx_data(path).0.clone()
+}
+
+pub fn idx_host_buffer(path: &str, shape: &[usize]) -> HostBuffer {
+    let data = idx_data(path);
+    if data.0 != shape {
+        die(&format!("{} changed since compilation: {:?} vs {:?}", path, data.0, shape));
+    }
+    let dims: Vec<i64> = shape.iter().map(|&d| d as i64).collect();
+    HostBuffer::from_data(data.1.clone(), Some(dims), None)
+}
+
 pub fn seed_host_buffer() -> HostBuffer {
     let seed = match std::env::var("VECTOR_SEED") {
         Ok(s) => s.parse::<u64>()
@@ -110,6 +161,9 @@ pub fn input_host_buffer(spec: &InputSpec) -> HostBuffer {
     }
     if spec.path.ends_with(".txt") {
         return crate::text::txt_host_buffer(&spec.path, &spec.shape);
+    }
+    if spec.path.ends_with(".gz") {
+        return idx_host_buffer(&spec.path, &spec.shape);
     }
     let (shape, dtype, offset) = npy_meta(&spec.path);
     if shape != spec.shape || dtype != spec.dtype {

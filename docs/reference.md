@@ -42,7 +42,7 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 - `reshape(x, dims...)` — dims are compile-time constants; arithmetic on constants works: `reshape(x, h * w)`
 - `slice(x, start, size)` — axis 0; `start` may be a runtime scalar, `size` is static; a vector of starts gathers a batch of windows in one op: `slice(data, starts, size)` → `[count, size, ...]`
 - `len(x)` — the leading dimension as a number (fixed at compile time)
-- `concat(a, b, ...)` — join along axis 0; `stack(a, b, ...)` — join along a new axis 0
+- `concat(a, b, ...)` — join along axis 0; `stack(a, b, ...)` — join along a new axis 0; both work under `vmap` (unbatched parts broadcast, like prepending a cls token)
 - `take(values, indices)` — fancy indexing along axis 0 (embedding lookups scale to any vocab); differentiable, duplicate indices accumulate gradient, out-of-range indices clamp
 - `sort(x)`, `argsort(x)` — vectors; batch with `vmap`; `sort` is differentiable
 - `argmax(x)`, `argmin(x)` — first index on ties
@@ -97,6 +97,7 @@ Text enters as bytes or token ids — there are no strings in the graph.
 | `.png` | image tensor `[h, w]` or `[h, w, c]`, f32 in 0..1 |
 | `.wav` | record `{samples, rate}`, f32 in -1..1 |
 | `.txt` | vector of byte values, f32 in 0..255 |
+| `.gz` | gzipped idx (the mnist format) — tensor of byte values, f32 in 0..255 |
 
 A `load` after a `save` of the same path in one program returns the saved value.
 

@@ -7,7 +7,7 @@ n_head = 4
 head_dim = 16
 batch_size = 16
 learning_rate = 0.001
-rounds = 20
+epochs = 20
 chunk_steps = 100
 sample_len = 300
 
@@ -77,7 +77,7 @@ state = adam_init(Gpt(vocab, block_size, n_embd, n_head, head_dim))
 eval_x = reshape(data[:batch_size * block_size], batch_size, block_size)
 eval_y = reshape(data[1:batch_size * block_size + 1], batch_size, block_size)
 
-for round in 0..rounds:
+for round in 0..epochs:
   state = train_chunk(state, data, learning_rate, batch_size, block_size, chunk_steps)
   print(state.p.loss(eval_x, eval_y))
 

@@ -1,0 +1,90 @@
+# A vision transformer classifying mnist digits, written entirely in vector
+
+image_size = 28
+patch_size = 7
+n_embd = 64
+n_head = 4
+head_dim = 16
+classes = 10
+batch_size = 64
+learning_rate = 0.001
+epochs = 10
+chunk_steps = 200
+n_train = 60000
+n_test = 10000
+
+module Block(tokens, dim, heads, hdim):
+  attention_norm = LayerNorm(dim)
+  query = Linear(dim, dim)
+  key = Linear(dim, dim)
+  value = Linear(dim, dim)
+  out_proj = Linear(dim, dim)
+  mlp_norm = LayerNorm(dim)
+  expand = Linear(dim, 4 * dim)
+  contract = Linear(4 * dim, dim)
+
+  attention(self, x):
+    q = transpose(reshape(self.query(x), tokens, heads, hdim), 1, 0, 2)
+    k = transpose(reshape(self.key(x), tokens, heads, hdim), 1, 0, 2)
+    v = transpose(reshape(self.value(x), tokens, heads, hdim), 1, 0, 2)
+    scores = vmap(matmul, q, transpose(k, 0, 2, 1)) / sqrt(hdim)
+    merged = transpose(vmap(matmul, vmap(softmax_rows, scores), v), 1, 0, 2)
+    self.out_proj(reshape(merged, tokens, dim))
+
+  forward(self, x):
+    attended = x + self.attention(self.attention_norm(x))
+    attended + self.contract(relu(self.expand(self.mlp_norm(attended))))
+
+module Vit(size, patch, dim, heads, hdim, classes):
+  cls = randn(1, dim) * 0.02
+  patch_embed = Linear(patch * patch, dim)
+  position = Embedding(size * size / (patch * patch) + 1, dim)
+  block1 = Block(size * size / (patch * patch) + 1, dim, heads, hdim)
+  block2 = Block(size * size / (patch * patch) + 1, dim, heads, hdim)
+  final_norm = LayerNorm(dim)
+  head = Linear(dim, classes)
+
+  patchify(self, image):
+    grid = transpose(reshape(image, size / patch, patch, size / patch, patch), 0, 2, 1, 3)
+    reshape(grid, size * size / (patch * patch), patch * patch)
+
+  forward(self, image):
+    x = concat(self.cls, self.patch_embed(self.patchify(image)))
+    x = x + self.position(arange(size * size / (patch * patch) + 1))
+    x = self.block1(x)
+    x = self.block2(x)
+    self.head(self.final_norm(x)[0])
+
+  sample_loss(self, image, label):
+    cross_entropy(self(image), label)
+
+  loss(self, images, labels):
+    mean(vmap(self.sample_loss, images, labels))
+
+function predict(model, image):
+  argmax(model(image))
+
+train_x = reshape(load("https://ossci-datasets.s3.amazonaws.com/mnist/train-images-idx3-ubyte.gz") / 255.0, 60000, 784)
+train_y = load("https://ossci-datasets.s3.amazonaws.com/mnist/train-labels-idx1-ubyte.gz")
+test_x = reshape(load("https://ossci-datasets.s3.amazonaws.com/mnist/t10k-images-idx3-ubyte.gz") / 255.0, 10000, 784)
+test_y = load("https://ossci-datasets.s3.amazonaws.com/mnist/t10k-labels-idx1-ubyte.gz")
+
+function get_batch(images, labels, count):
+  idx = floor(uniform(count) * len(images))
+  {x: take(images, idx), y: take(labels, idx)}
+
+function train_chunk(state, images, labels, lr, count, steps):
+  for step in 0..steps:
+    batch = get_batch(images, labels, count)
+    state = adam(state, grad(state.p.loss, batch.x, batch.y), lr)
+  state
+
+state = adam_init(Vit(image_size, patch_size, n_embd, n_head, head_dim, classes))
+
+for round in 0..epochs:
+  state = train_chunk(state, train_x, train_y, learning_rate, batch_size, chunk_steps)
+  print(mean(where(vmap(predict, state.p, test_x[:1000]) == test_y[:1000], 1.0, 0.0)))
+
+model = state.p
+print(mean(where(vmap(predict, model, test_x) == test_y, 1.0, 0.0)))
+save(model, "vit.safetensors")
