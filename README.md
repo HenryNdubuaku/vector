@@ -6,7 +6,7 @@ A programming language for machine learning, compiled to CPUs, GPUs and TPUs thr
 
 ML in Python relies on special libraries with C/C++ backend; PyTorch, NumPy, JAX, Pandas. JAX is particularly fast, thanks to the XLA compiler which compiles for CPU, TPUs/Nvidia GPUs, AMD GPUs, Apple GPUs, etc. 
 
-Vector brings JAX-level speed across the entire program with Pythonic-syntax and functional paradigm, your entire code can run on accelerators, not just the training loop. 
+Vector brings JAX-level speed across the entire program with Pythonic-syntax and functional paradigm, your entire code run on accelerators, not just the training loop. 
 
 - 200 full-batch gradient-descent steps of a 1→1024→1024→1 tanh network on 2048 points of sin(x), f32. 
 - JAX runs a jitted `fori_loop`; PyTorch runs both its standard eager loop and a `torch.compile`d step. 
@@ -18,7 +18,6 @@ Vector brings JAX-level speed across the entire program with Pythonic-syntax and
 | NVIDIA RTX 4000 Ada       | **0.09s** | **0.09s**  | 0.29s           | 0.25s              |
 | Google TPU v6e            | **0.01s** | **0.01s**  | —               | —                  |
 | Apple M5 Max CPU (ARM)    | **1.51s** | 1.62s      | 2.11s           | 2.15s              |
-| GPU-box CPU (x86)         | 7.60s     | **6.90s**  | 13.50s          | 14.81s             |
 
 ## Overview
 
