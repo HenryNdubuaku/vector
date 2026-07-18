@@ -66,6 +66,8 @@ Random at run time, different every run; set `VECTOR_SEED=<n>` to reproduce a ru
 ## Neural networks
 
 - `Linear(in_size, out_size)` — stdlib module: `w` (glorot uniform), `b` (zeros), `forward(self, x)`
+- `Conv(size, in_channels, out_channels, stride)` — stdlib module wrapping `conv` with same-padding and a bias; images are `[height, width, channels]`
+- `conv(x, kernel, stride, padding)` — 2d convolution; kernel is `[size, size, in_channels, out_channels]`; differentiable both ways; batch with `vmap`
 - `LayerNorm(dim)` — stdlib module normalizing each row of a matrix: `gain`, `bias`, `forward(self, x)`; `token_norm(params, token)` is its per-row helper for direct `vmap` use
 - `Embedding(count, dim)` — stdlib module: `w` (normal, std 0.02); calling it with an id vector gathers rows, differentiably
 - `softmax_rows(m)` — softmax over each row of a matrix

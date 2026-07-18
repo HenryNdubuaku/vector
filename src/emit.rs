@@ -141,6 +141,15 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
                 operands.join(", "), in_types.join(", "), out
             )
         }
+        OpKind::Conv { stride, pad_lo, pad_hi, lhs_dilation, rhs_dilation } => format!(
+            "stablehlo.convolution({}, {}) dim_numbers = [b, 0, 1, f]x[0, 1, i, o]->[b, 0, 1, f], window = {{stride = [{s}, {s}], pad = [[{lo}, {hi}], [{lo}, {hi}]], lhs_dilate = [{ld}, {ld}], rhs_dilate = [{rd}, {rd}]}} {{batch_group_count = 1 : i64, feature_group_count = 1 : i64}} : ({}, {}) -> {}",
+            arg(0), arg(1), t(0), t(1), out,
+            s = stride, lo = pad_lo, hi = pad_hi, ld = lhs_dilation, rd = rhs_dilation
+        ),
+        OpKind::Reverse(dims) => format!(
+            "stablehlo.reverse {}, dims = [{}] : {}",
+            arg(0), join(dims), out
+        ),
         OpKind::Slice(dim, start, limit) => {
             let in_shape = &nodes[node.inputs[0]].shape;
             let ranges: Vec<String> = in_shape.iter().enumerate()

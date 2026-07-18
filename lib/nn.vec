@@ -18,6 +18,13 @@ module Embedding(count, dim):
   forward(self, ids):
     self.w[ids]
 
+module Conv(size, in_channels, out_channels, stride):
+  k = reshape(glorot_uniform(size * size * in_channels, out_channels), size, size, in_channels, out_channels)
+  b = zeros(out_channels)
+
+  forward(self, x):
+    conv(x, self.k, stride, (size - 1) / 2) + self.b
+
 function layer_norm(x, g, b):
   (x - mean(x)) / sqrt(var(x) + 0.00001) * g + b
 

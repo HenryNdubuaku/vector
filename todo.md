@@ -2,7 +2,7 @@
 
 The core items are ordered: each unblocks the ones after it. The ecosystem tracks are independent of the core and of each other, contributors can pick any of them up.
 
-## 1. Text and tokenizers 
+## Text and tokenizers 
 Tokenization is data prep, not differentiable compute — it lives at the boundary with the other codecs, never in the graph. No strings in the language.
 - [x] `load("data.txt")` → byte tensor; `save(x, "out.txt")` writes one; byte-level models need no tokenizer at all (vocab 256)
 - [x] `tokenize("data.txt", "tokenizer.json")` → id tensor; `print(detokenize(ids, "tokenizer.json"))` for generated text — byte-level BPE (gpt-2 family), verified id-exact against tiktoken incl. contractions/unicode/whitespace; full shakespeare tokenizes in ~0.1s
@@ -10,29 +10,14 @@ Tokenization is data prep, not differentiable compute — it lives at the bounda
 - [x] Tokenizers from scratch IN vector proved out: bincount pair counts + stable-argsort compaction — tests/cases/bpe.vec is a working bpe trainer in 30 lines
 - [ ] Non-byte-level tokenizers (sentencepiece/metaspace, llama family) — vector dies loudly on them for now
 
-## 2. Small language gaps
-Cheap language work that makes everything after it read naturally — worth landing before the GPT demo so the demo code shows it off.
-- [x] Indexing sugar: `x[i]` (runtime scalar or index vector, = take) and `x[a:b]` (static bounds, open ends and negatives work) — differentiable, vmap-friendly for `x[i]`
-- [x] `while cond:` — real runtime condition compiled into the XLA while's cond region; carried records work; grad/print/random inside die with clear messages for now
-- [x] abs, pow, concat, stack — all with gradients; tests/cases/bpe.vec rewritten with slices+concat, byte-identical output
-- [x] `x[a:b]` with a runtime start and static width: `x[k : k + 4]` desugars to the gather (structural width detection)
-
-## 3. The payoff demo: a small GPT in vector
+## The payoff demo: a small GPT in vector
 Byte-level Shakespeare in `example/` — the artifact that makes people install it, and the load test that flushes out remaining gaps.
 - [x] example/gpt.vec: 2-block multi-head transformer, layernorm, adam with bias correction, causal mask — all in vector source; trains to loss ~1.8 and samples structured pseudo-shakespeare in ~15s cpu / ~7s metal
 - [x] The load test worked: it flushed out and fixed — vmap record-passthrough + depth lifting (weights stay unmapped, `vmap(step, model, xb)`), negative literal indexing `x[-1]`, compile-time arithmetic on constants (`reshape(x, h * w)`), .txt/.json urls in load()
 - [x] tests/cases/attention.vec pins the transformer machinery deterministically (trace-time weights, grad flows, update decreases loss)
 - [ ] Promote to stdlib in item 4: layernorm, cross_entropy, adam, attention (the demo's lnr/xent/train_chunk/attend are the drafts)
 
-## 4. NN training stdlib
-What a torch/jax user reaches for daily, written in vector source (records already express optimizer state); harvests what the GPT demo proves out, while the code is fresh.
-- [x] Optimizers: adam, adamw, sgd with momentum — state record with params at `.p`, step count carried inside: `st = adam_init(model)`, `st = adam(st, g, lr)`
-- [x] Losses: `cross_entropy(logits, target)` = logsumexp - logits[target] (indexing, no one_hot depth needed), mse
-- [x] Schedules: cosine_decay, warmup; clipping: clip, clip_by_norm (tensor-shaped; whole-record norm needs a record reduction — future)
-- [x] `normal(dims...)` builtin (Box-Muller over threefry uniform; dims are variadic so it can't be stdlib source); layer_norm promoted from the demo
-- [x] example/gpt.vec now uses the stdlib (adam_init/adam, cross_entropy, layer_norm) — trains identically, ~10 lines shorter; tests/cases/nn.vec pins values + convergence
-
-## 5. Staged loop execution
+## Staged loop execution
 The standing architectural item — becomes necessary once training runs take minutes (which the GPT demo will cause). Design premise: staging must not surrender the single-dispatch performance — stages exchange device buffer handles, never host data.
 - [ ] Split programs at top-level loop boundaries: prefix / body / suffix executables, host-driven
 - [ ] Loop-carried state stays device-resident and is donated (input/output aliasing, what `jax.jit(donate_argnums)` uses) so the step executable updates weights in place instead of copying
@@ -41,22 +26,22 @@ The standing architectural item — becomes necessary once training runs take mi
 - [ ] Checkpoint-every-k-epochs, early stopping (uses `while cond:` from item 2)
 - [ ] Same treatment for the repl: session values become device buffer handles (kills the D2H/H2D round-trip per chunk)
 
-## 6. Mixed precision
+## Mixed precision
 The biggest raw lever left on accelerators (2–4x matmul throughput); whole-graph emission makes it a mechanical pass, not a rewrite.
 - [ ] bf16 policy: params and reductions stay f32, dot/elementwise compute in bf16 — converts inserted systematically at emission
 - [ ] Surface: `--bf16` flag or per-module policy; f32 stays the default everywhere
 - [ ] Read bf16 safetensors (convert on load) — pretrained checkpoints are increasingly bf16
 - [ ] Validate on the GPT demo: bf16-vs-f32 loss curves agree, measure the speedup per backend
 
-## 7. Convolutions and vision
+## Convolutions and vision
 The one op-family gap that closes off a whole domain; everything else in vision is composition. Already landed on the way: examples/vit.vec (mnist vision transformer, ~95% test accuracy in ~15s cpu — patchify is reshape+transpose, no convs needed) and `.gz` idx loading (the mnist files, decoded by the PNG codec's inflate).
-- [ ] conv(x, kernel, stride, padding) → stablehlo.convolution; VJP = transposed conv (both directions needed for training)
+- [x] conv(x, kernel, stride, padding) → stablehlo.convolution; both VJPs (input grad = lhs-dilated conv with reversed io-swapped kernel, kernel grad = rhs-dilated conv of transposed operands) — verified exact by hand and on metal; stdlib `Conv(size, in, out, stride)` module with same-padding; examples/cnn.vec = spoken-digit CNN at ~93% in ~5s
 - [ ] max_pool / avg_pool → stablehlo.reduce_window; max_pool VJP = select_and_scatter
 - [ ] pad(x, ...) builtin (convs and sequence work both need it)
 - [ ] Batchnorm question: running stats are mutable state — decide the functional idiom (state-in-record, flax-style) before promising the layer
 - [ ] Small CNN on real images end to end (mnist-scale; the PNG codec already loads data) — where it demos is your call
 
-## 8. Distributed ML
+## Distributed ML
 Enter with GSPMD: annotate shardings, XLA partitions the graph and inserts collectives — vector's whole-program graph is the ideal input.
 - [ ] Optional early de-risk spike: enumerate PJRT devices, run one replicated executable on the 2×RTX box
 - [ ] Single-host data parallel first (multi-GPU, multi-chip TPU)

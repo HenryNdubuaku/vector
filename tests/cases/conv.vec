@@ -1,0 +1,18 @@
+img = reshape(arange(9.0), 3, 3, 1)
+k = reshape(zeros(4) + 1.0, 2, 2, 1, 1)
+print(reshape(conv(img, k, 1, 0), 2, 2))
+
+function loss(kernel, image):
+  sum(conv(image, kernel, 1, 0))
+
+g = grad(loss, k, img)
+print(reshape(g, 2, 2))
+
+function loss2(image, kernel):
+  sum(conv(image, kernel, 1, 0) * conv(image, kernel, 1, 0))
+
+g2 = grad(loss2, img, k)
+print(sum(g2))
+
+c = Conv(3, 1, 4, 2)
+print(len(c(reshape(arange(64.0), 8, 8, 1))))

@@ -736,6 +736,56 @@ impl Tracer {
                 let val = self.emit(OpKind::Transpose(perm), vec![v.val.id], shape, v.val.dtype);
                 TVal::Tensor(BVal { val, bdims: k })
             }
+            "conv" => {
+                if args.len() != 4 {
+                    die(&format!("conv expects (x, kernel, stride, padding), got {} args", args.len()));
+                }
+                let x = self.trace(&args[0], env, fns).tensor("conv");
+                let k = self.trace(&args[1], env, fns).tensor("conv kernel");
+                let stride = self.int_lit(&args[2], env, "conv stride");
+                let pad = self.int_lit(&args[3], env, "conv padding");
+                if stride == 0 {
+                    die("conv stride must be positive");
+                }
+                if k.bdims != 0 || k.val.shape.len() != 4 {
+                    die("conv kernel must be [size, size, in_channels, out_channels]");
+                }
+                if k.val.shape[0] != k.val.shape[1] {
+                    die("conv kernels must be square for now");
+                }
+                let per = per_shape(&x);
+                if per.len() != 3 || x.bdims > 1 {
+                    die(&format!("conv expects an image [height, width, channels], got shape {:?}", per));
+                }
+                if per[2] != k.val.shape[2] {
+                    die(&format!("conv channel mismatch: image has {}, kernel takes {}", per[2], k.val.shape[2]));
+                }
+                let size = k.val.shape[0];
+                let out_of = |d: usize| (d + 2 * pad - size) / stride + 1;
+                if per[0] + 2 * pad < size || per[1] + 2 * pad < size {
+                    die(&format!("conv kernel {} is larger than the padded image {:?}", size, per));
+                }
+                let node = OpKind::Conv {
+                    stride,
+                    pad_lo: pad as i64,
+                    pad_hi: pad as i64,
+                    lhs_dilation: 1,
+                    rhs_dilation: 1,
+                };
+                if x.bdims == 1 {
+                    let b = x.val.shape[0];
+                    let shape = vec![b, out_of(per[0]), out_of(per[1]), k.val.shape[3]];
+                    let val = self.emit(node, vec![x.val.id, k.val.id], shape, x.val.dtype);
+                    return TVal::Tensor(BVal { val, bdims: 1 });
+                }
+                let mut lifted = vec![1];
+                lifted.extend(&per);
+                let one = self.reshape(&x.val, lifted);
+                let shape = vec![1, out_of(per[0]), out_of(per[1]), k.val.shape[3]];
+                let val = self.emit(node, vec![one.id, k.val.id], shape.clone(), x.val.dtype);
+                let val = self.reshape(&val, shape[1..].to_vec());
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
             "matmul" => {
                 if args.len() != 2 {
                     die(&format!("matmul expects 2 args, got {}", args.len()));

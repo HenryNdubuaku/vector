@@ -226,6 +226,57 @@ Output:
 [[2, 4, 6], [8, 10, 12]] : f32
 ```
 
+## conv
+
+```python
+img = reshape(arange(9.0), 3, 3, 1)
+k = reshape(zeros(4) + 1.0, 2, 2, 1, 1)
+print(reshape(conv(img, k, 1, 0), 2, 2))
+
+function loss(kernel, image):
+  sum(conv(image, kernel, 1, 0))
+
+g = grad(loss, k, img)
+print(reshape(g, 2, 2))
+
+function loss2(image, kernel):
+  sum(conv(image, kernel, 1, 0) * conv(image, kernel, 1, 0))
+
+g2 = grad(loss2, img, k)
+print(sum(g2))
+
+c = Conv(3, 1, 4, 2)
+print(len(c(reshape(arange(64.0), 8, 8, 1))))
+```
+
+Output:
+
+```
+[[8, 12], [20, 24]] : f32
+[[8, 12], [20, 24]] : f32
+512 : f32
+4 : f32
+```
+
+## dft
+
+```python
+wave = cos(arange(64.0) * (2.0 * pi * 4.0 / 64.0))
+angles = matmul(reshape(arange(16.0), 16, 1), reshape(arange(64.0), 1, 64)) * (2.0 * pi / 64.0)
+re = matmul(reshape(wave, 1, 64), transpose(cos(angles)))
+im = matmul(reshape(wave, 1, 64), transpose(sin(angles)))
+power = re * re + im * im
+print(argmax(power[0]))
+print(where(power[0][4] > 100.0 * power[0][7], 1.0, 0.0))
+```
+
+Output:
+
+```
+4 : f32
+1 : f32
+```
+
 ## dtypes
 
 ```python

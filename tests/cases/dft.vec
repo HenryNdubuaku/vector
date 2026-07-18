@@ -1,0 +1,7 @@
+wave = cos(arange(64.0) * (2.0 * pi * 4.0 / 64.0))
+angles = matmul(reshape(arange(16.0), 16, 1), reshape(arange(64.0), 1, 64)) * (2.0 * pi / 64.0)
+re = matmul(reshape(wave, 1, 64), transpose(cos(angles)))
+im = matmul(reshape(wave, 1, 64), transpose(sin(angles)))
+power = re * re + im * im
+print(argmax(power[0]))
+print(where(power[0][4] > 100.0 * power[0][7], 1.0, 0.0))

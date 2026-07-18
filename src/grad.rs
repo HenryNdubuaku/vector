@@ -57,6 +57,55 @@ impl Tracer {
             }
             OpKind::Gather(_) => die("differentiating through slice with vector starts isn't supported yet"),
             OpKind::Scatter => die("differentiating through scatter isn't supported yet"),
+            OpKind::Reverse(dims) => {
+                let da = self.emit(OpKind::Reverse(dims.clone()), vec![g.id], ins[0].shape.clone(), g.dtype);
+                vec![(ins[0].id, da)]
+            }
+            OpKind::Conv { stride, pad_lo, pad_hi, lhs_dilation, rhs_dilation } => {
+                if *lhs_dilation != 1 || *rhs_dilation != 1 || pad_lo != pad_hi {
+                    die("differentiating through a dilated or unevenly padded convolution isn't supported yet");
+                }
+                let s = *stride;
+                let p = *pad_lo;
+                let (x, k) = (&ins[0], &ins[1]);
+                let (kh, kw, ci, co) = (k.shape[0], k.shape[1], k.shape[2], k.shape[3]);
+                let h = x.shape[1] as i64;
+                let oh = out.shape[1] as i64;
+                let adjust = (h + 2 * p - kh as i64) - (oh - 1) * s as i64;
+                let rev = self.emit(OpKind::Reverse(vec![0, 1]), vec![k.id], k.shape.clone(), k.dtype);
+                let swapped = self.emit(OpKind::Transpose(vec![0, 1, 3, 2]), vec![rev.id], vec![kh, kw, co, ci], k.dtype);
+                let dx = self.emit(
+                    OpKind::Conv {
+                        stride: 1,
+                        pad_lo: kh as i64 - 1 - p,
+                        pad_hi: kh as i64 - 1 - p + adjust,
+                        lhs_dilation: s,
+                        rhs_dilation: 1,
+                    },
+                    vec![g.id, swapped.id],
+                    x.shape.clone(),
+                    x.dtype,
+                );
+                let mut xt_shape = vec![x.shape[3], x.shape[1], x.shape[2], x.shape[0]];
+                let xt = self.emit(OpKind::Transpose(vec![3, 1, 2, 0]), vec![x.id], xt_shape.clone(), x.dtype);
+                let gt_shape = vec![g.shape[1], g.shape[2], g.shape[0], g.shape[3]];
+                let gt = self.emit(OpKind::Transpose(vec![1, 2, 0, 3]), vec![g.id], gt_shape, g.dtype);
+                xt_shape = vec![ci, kh, kw, co];
+                let dkt = self.emit(
+                    OpKind::Conv {
+                        stride: 1,
+                        pad_lo: p,
+                        pad_hi: p - adjust,
+                        lhs_dilation: 1,
+                        rhs_dilation: s,
+                    },
+                    vec![xt.id, gt.id],
+                    xt_shape,
+                    x.dtype,
+                );
+                let dk = self.emit(OpKind::Transpose(vec![1, 2, 0, 3]), vec![dkt.id], k.shape.clone(), k.dtype);
+                vec![(x.id, dx), (k.id, dk)]
+            }
             OpKind::DynUpdateSlice => {
                 die("differentiating through dynamic_update_slice isn't supported yet")
             }

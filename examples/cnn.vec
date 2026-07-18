@@ -1,0 +1,70 @@
+# A convolutional network classifying spoken digits, written entirely in vector
+
+sample_rate = 8000
+clip_len = 8192
+frame_len = 256
+frames = 32
+bins = 64
+classes = 10
+batch_size = 32
+learning_rate = 0.001
+rounds = 15
+chunk_steps = 150
+n_train = 2700
+
+module Cnn(frames, frame_len, bins, classes):
+  spec_norm = LayerNorm(bins)
+  conv1 = Conv(3, 1, 16, 2)
+  conv2 = Conv(3, 16, 32, 2)
+  conv3 = Conv(3, 32, 64, 2)
+  fc = Linear(2048, 64)
+  head = Linear(64, classes)
+
+  spectrogram(self, clip):
+    windows = reshape(clip, frames, frame_len)
+    angles = matmul(reshape(arange(bins), bins, 1), reshape(arange(frame_len), 1, frame_len)) * (2.0 * pi / frame_len)
+    re = matmul(windows, transpose(cos(angles)))
+    im = matmul(windows, transpose(sin(angles)))
+    log(re * re + im * im + 0.000001)
+
+  forward(self, clip):
+    image = reshape(self.spec_norm(self.spectrogram(clip)), frames, bins, 1)
+    x = relu(self.conv1(image))
+    x = relu(self.conv2(x))
+    x = relu(self.conv3(x))
+    self.head(relu(self.fc(reshape(x, 2048))))
+
+  sample_loss(self, clip, label):
+    cross_entropy(self(clip), label)
+
+  loss(self, clips, labels):
+    mean(vmap(self.sample_loss, clips, labels))
+
+function predict(model, clip):
+  argmax(model(clip))
+
+sounds = load("https://github.com/HenryNdubuaku/vector/releases/download/datasets/fsdd-sounds.gz") / 127.5 - 1.0
+digits = load("https://github.com/HenryNdubuaku/vector/releases/download/datasets/fsdd-labels.gz")
+train_x = sounds[:2700]
+train_y = digits[:2700]
+test_x = sounds[2700:]
+test_y = digits[2700:]
+
+function get_batch(clips, labels, count):
+  idx = floor(uniform(count) * len(clips))
+  {x: clips[idx], y: labels[idx]}
+
+function train_chunk(state, clips, labels, lr, count, steps, total):
+  for step in 0..steps:
+    batch = get_batch(clips, labels, count)
+    state = adam(state, grad(state.p.loss, batch.x, batch.y), cosine_decay(lr, state.k, total))
+  state
+
+state = adam_init(Cnn(frames, frame_len, bins, classes))
+
+for round in 0..rounds:
+  state = train_chunk(state, train_x, train_y, learning_rate, batch_size, chunk_steps, 2250.0)
+  print(mean(where(vmap(predict, state.p, test_x) == test_y, 1.0, 0.0)))
+
+model = state.p
+save(model, "cnn.safetensors")
