@@ -8,12 +8,8 @@ function logsumexp(x):
   m = max(x)
   m + log(sum(exp(x - m)))
 
-function softmax(x):
-  e = exp(x - max(x))
-  e / sum(e)
-
 function softmax_rows(rows):
-  vmap(softmax, rows)
+  softmax(rows)
 
 function var(x):
   d = x - mean(x)

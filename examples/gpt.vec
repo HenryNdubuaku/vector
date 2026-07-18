@@ -29,8 +29,8 @@ module Block(block, dim, heads, hdim):
     q = transpose(reshape(self.query(x), block, heads, hdim), 1, 0, 2)
     k = transpose(reshape(self.key(x), block, heads, hdim), 1, 0, 2)
     v = transpose(reshape(self.value(x), block, heads, hdim), 1, 0, 2)
-    scores = vmap(matmul, q, transpose(k, 0, 2, 1)) / sqrt(hdim) + self.causal_mask()
-    merged = transpose(vmap(matmul, vmap(softmax_rows, scores), v), 1, 0, 2)
+    scores = matmul(q, transpose(k, 0, 2, 1)) / sqrt(hdim) + self.causal_mask()
+    merged = transpose(matmul(softmax(scores), v), 1, 0, 2)
     self.out_proj(reshape(merged, block, dim))
 
   forward(self, x):
@@ -65,7 +65,7 @@ data = load("https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tin
 
 function get_batch(data, count, size):
   starts = floor(uniform(count) * (len(data) - size - 1.0))
-  {x: slice(data, starts, size), y: slice(data, starts + 1.0, size)}
+  {x: data[starts : starts + size], y: data[starts + 1.0 : starts + 1.0 + size]}
 
 function train_chunk(state, data, lr, count, size, steps):
   for step in 0..steps:

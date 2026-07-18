@@ -16,7 +16,7 @@ module Embedding(count, dim):
   w = randn(count, dim) * 0.02
 
   forward(self, ids):
-    take(self.w, ids)
+    self.w[ids]
 
 function layer_norm(x, g, b):
   (x - mean(x)) / sqrt(var(x) + 0.00001) * g + b

@@ -548,6 +548,10 @@ print(len(x))
 print(slice(x, [0.0, 3.0, 7.0], 3))
 win = random_windows(x, 2, 4)
 print(where(sum(abs(win[0][1:] - win[0][:3] - 1.0)) == 0.0, 1.0, 0.0))
+
+s = sum([2.0])
+print(x[s : s + 3])
+print(x[s * 2.0 : s * 2.0 + 3])
 ```
 
 Output:
@@ -568,6 +572,8 @@ Output:
 10 : f32
 [[0, 1, 2], [3, 4, 5], [7, 8, 9]] : f32
 1 : f32
+[2, 3, 4] : f32
+[4, 5, 6] : f32
 ```
 
 ## jacobian
@@ -911,6 +917,12 @@ s2 = sgd_init({w: 0.0})
 for i in 0..50:
   s2 = sgd(s2, grad(loss, s2.p, x), 0.05, 0.9)
 print(where(abs(s2.p.w - 3.0) < 0.2, 1.0, 0.0))
+
+sm = softmax(reshape(arange(6.0), 2, 3))
+print(sum(sm, 1))
+bm = matmul(reshape(arange(8.0), 2, 2, 2), reshape(arange(8.0), 2, 2, 2))
+print(bm)
+print(sum(matmul(reshape(arange(8.0), 2, 2, 2), reshape(arange(4.0), 2, 2))))
 ```
 
 Output:
@@ -930,6 +942,9 @@ Output:
 1 : f32
 1 : f32
 1 : f32
+[1, 1] : f32
+[[[2, 3], [6, 11]], [[46, 55], [66, 79]]] : f32
+92 : f32
 ```
 
 ## optimizer

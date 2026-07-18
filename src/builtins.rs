@@ -744,6 +744,26 @@ impl Tracer {
                 let b = self.trace(&args[1], env, fns).tensor("matmul");
                 TVal::Tensor(self.bmatmul(a, b))
             }
+            "softmax" => {
+                if args.len() != 1 {
+                    die(&format!("softmax expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns).tensor("softmax");
+                if per_shape(&v).is_empty() {
+                    die("softmax needs rank >= 1");
+                }
+                let shape = v.val.shape.clone();
+                let last = shape.len() - 1;
+                let inner: Vec<usize> = (0..last).collect();
+                let m = self.reduce("maximum", f64::NEG_INFINITY, &v.val, &[last]);
+                let mb = self.broadcast_along(&m, &shape, inner.clone());
+                let d = self.ewise("subtract", v.val.clone(), mb);
+                let e = self.unary("exponential", &d);
+                let s = self.reduce_sum(&e, &[last]);
+                let sb = self.broadcast_along(&s, &shape, inner);
+                let val = self.ewise("divide", e, sb);
+                TVal::Tensor(BVal { val, bdims: v.bdims })
+            }
             "grad" => {
                 let (fname, target, traced) = if let Some(Expr::Field(obj, mname)) = args.first() {
                     let inst = self.trace(obj, env, fns);

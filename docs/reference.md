@@ -12,7 +12,7 @@ Every function below is demonstrated with verified output in [examples.md](examp
 | `for i in 0..n:` | loop, compiled to one XLA while op; `by` sets the step: `for x in 0.0..1.0 by 0.25:` |
 | `while cond:` | loop until a scalar comparison turns false, compiled to one XLA while op; the body must reassign a binding the condition depends on |
 | `x[i]`, `x[iv]` | index rows along axis 0 — a runtime scalar picks one row, a vector gathers rows (same as `take`); negative literals count from the end: `x[-1]` |
-| `x[a:b]` | slice along axis 0 with compile-time bounds; open ends and negative bounds work: `x[:3]`, `x[-2:]` |
+| `x[a:b]` | slice along axis 0 with compile-time bounds; open ends and negative bounds work: `x[:3]`, `x[-2:]`; a runtime start with a static width works: `x[i : i + 4]`, and a vector of starts gathers windows: `data[starts : starts + size]` |
 | `import mlp` | bring `function`/`module` declarations from `mlp.vec` (dots are subdirectories, path relative to the importing file) |
 | `[1.0, 2.0]` | array literal |
 | `{a: x, b: y}` | record literal; `.a` accesses a field |
@@ -31,7 +31,8 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 
 - elementwise: `exp(x)`, `log(x)`, `tanh(x)`, `sqrt(x)`, `sin(x)`, `cos(x)`, `floor(x)`, `abs(x)`, `mod(a, b)`, `pow(a, b)`, `maximum(a, b)`, `minimum(a, b)`
 - reductions: `sum(x)`, `mean(x)`, `max(x)`, `min(x)` — optional trailing axis: `sum(m, 0)`
-- linear algebra: `matmul(a, b)` (rank 1 and 2; higher ranks via `vmap(matmul, a, b)`), `transpose(m)` — or with an axis permutation: `transpose(x, 1, 0, 2)`
+- linear algebra: `matmul(a, b)` — leading dimensions batch like torch (`[h, t, k] @ [h, k, n]`, and `[b, t, k] @ [k, n]` broadcasts); `transpose(m)` — or with an axis permutation: `transpose(x, 1, 0, 2)`
+- `softmax(x)` — along the last axis, any rank (a matrix softmaxes per row)
 - casts: `f32(x)`, `f64(x)`
 
 ## Arrays
@@ -69,7 +70,7 @@ Random at run time, different every run; set `VECTOR_SEED=<n>` to reproduce a ru
 - `Embedding(count, dim)` — stdlib module: `w` (normal, std 0.02); calling it with an id vector gathers rows, differentiably
 - `softmax_rows(m)` — softmax over each row of a matrix
 - initializers: `glorot_uniform(fan_in, fan_out)`, `glorot_normal(fan_in, fan_out)`, `he_uniform(fan_in, fan_out)`, `he_normal(fan_in, fan_out)`, `lecun_uniform(fan_in, fan_out)`, `lecun_normal(fan_in, fan_out)`
-- stdlib functions (rank-1, written in vector itself; batch with `vmap`): `relu(x)`, `sigmoid(x)`, `softmax(x)`, `logsumexp(x)`, `var(x)`, `std(x)`, `norm(x)`, `layer_norm(x, gain, bias)`
+- stdlib functions (rank-1, written in vector itself; batch with `vmap`): `relu(x)`, `sigmoid(x)`, `logsumexp(x)`, `var(x)`, `std(x)`, `norm(x)`, `layer_norm(x, gain, bias)`
 - losses: `mse(pred, target)`; `cross_entropy(logits, target)` — from logits, target is a class index; batch with `vmap`
 - optimizers hold their state in a record with the params at `.p`: `adam_init(model)` makes the state, `adam(st, grad, lr)` steps it; `adamw(st, grad, lr, decay)` decouples weight decay; `sgd_init(model)` + `sgd(st, grad, lr, momentum)`
 - schedules are plain functions of the step: `cosine_decay(lr, step, total)`, `warmup(lr, step, steps)`

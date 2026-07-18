@@ -15,7 +15,7 @@ Cheap language work that makes everything after it read naturally — worth land
 - [x] Indexing sugar: `x[i]` (runtime scalar or index vector, = take) and `x[a:b]` (static bounds, open ends and negatives work) — differentiable, vmap-friendly for `x[i]`
 - [x] `while cond:` — real runtime condition compiled into the XLA while's cond region; carried records work; grad/print/random inside die with clear messages for now
 - [x] abs, pow, concat, stack — all with gradients; tests/cases/bpe.vec rewritten with slices+concat, byte-identical output
-- [ ] `x[a:b]` with runtime bounds of static width (e.g. `x[k:k+4]`) — needs symbolic width detection; slice() covers it meanwhile
+- [x] `x[a:b]` with a runtime start and static width: `x[k : k + 4]` desugars to the gather (structural width detection)
 
 ## 3. The payoff demo: a small GPT in vector
 Byte-level Shakespeare in `example/` — the artifact that makes people install it, and the load test that flushes out remaining gaps.

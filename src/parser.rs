@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::die;
 use crate::lexer::Tok;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Unit,
     Num(f64),
@@ -25,7 +25,7 @@ pub enum Expr {
     Seq(Box<Expr>, Box<Expr>),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Op { Add, Sub, Mul, Div }
 
 #[derive(Debug, Clone)]

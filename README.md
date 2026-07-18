@@ -48,8 +48,7 @@ module Mlp(hidden):
     self.l2(tanh(self.l1(x)))
 
   loss(self, inputs, targets):
-    error = self(inputs) - targets
-    mean(error * error)
+    mse(self(inputs), targets)
 
 model = Mlp(hidden_size)
 ```
@@ -59,15 +58,14 @@ Each epoch shuffles and slices minibatches, like a DataLoader with `shuffle=True
 
 ```python
 function train_epoch(model, inputs, targets, lr, n, batch, batches):
-  m = model
   perm = permutation(n)
-  xs = take(inputs, perm)
-  ts = take(targets, perm)
+  xs = inputs[perm]
+  ts = targets[perm]
   for step in 0..batches:
-    x = slice(xs, step * batch, batch)
-    t = slice(ts, step * batch, batch)
-    m = m - lr * grad(m.loss, x, t)
-  m
+    x = xs[step * batch : step * batch + batch]
+    t = ts[step * batch : step * batch + batch]
+    model = model - lr * grad(model.loss, x, t)
+  model
 
 for epoch in 0..epochs:
   model = train_epoch(model, inputs, targets, learning_rate, n, batch_size, batches)
@@ -158,7 +156,7 @@ Programs run on the CPU by default; add `--accelerate` to run on the machine's G
 vector filename.vec --accelerate
 ```
 
-**4. Read more**: [docs/reference.md](docs/reference.md) covers the whole language; [example project](example/) is a simple ML project.
+**4. Read more**: [docs/reference.md](docs/reference.md) covers the whole language; the [examples](examples/) train a GPT on Shakespeare and a vision transformer on MNIST, each in about a hundred lines.
 
 ## Roadmap
 

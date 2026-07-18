@@ -213,8 +213,11 @@ impl Tracer {
         }
         let pa = per_shape(&a);
         let pb = per_shape(&b);
-        if pa.is_empty() || pa.len() > 2 || pb.is_empty() || pb.len() > 2 {
-            die(&format!("matmul supports rank 1 and 2, got {:?} vs {:?}", pa, pb));
+        if pa.is_empty() || pb.is_empty() {
+            die(&format!("matmul needs rank >= 1, got {:?} vs {:?}", pa, pb));
+        }
+        if pa.len() > 2 || pb.len() > 2 {
+            return self.batched_matmul(a, b, pa, pb);
         }
         if pa[pa.len() - 1] != pb[0] {
             die(&format!("matmul contraction mismatch: {:?} vs {:?}", pa, pb));
@@ -230,6 +233,46 @@ impl Tracer {
         let batch: Vec<usize> = (0..k).collect();
         let val = self.dot(&av, &bv, batch.clone(), batch, vec![k + pa.len() - 1], vec![k]);
         BVal { val, bdims: k }
+    }
+
+    fn batched_matmul(&mut self, a: BVal, b: BVal, pa: Vec<usize>, pb: Vec<usize>) -> BVal {
+        if pa.len() == 1 || pb.len() == 1 {
+            die(&format!("matmul with batch dimensions expects matrices, got {:?} vs {:?}", pa, pb));
+        }
+        let ba = &pa[..pa.len() - 2];
+        let bb = &pb[..pb.len() - 2];
+        let per_batch: Vec<usize> = if ba.is_empty() {
+            bb.to_vec()
+        } else if bb.is_empty() || ba == bb {
+            ba.to_vec()
+        } else {
+            die(&format!("matmul batch dimensions mismatch: {:?} vs {:?}", pa, pb));
+        };
+        let core_a = &pa[pa.len() - 2..];
+        let core_b = &pb[pb.len() - 2..];
+        if core_a[1] != core_b[0] {
+            die(&format!("matmul contraction mismatch: {:?} vs {:?}", pa, pb));
+        }
+        let prefix = Self::batch_prefix(&a, &b);
+        let k = prefix.len();
+        let nb = k + per_batch.len();
+        let lift = |t: &mut Tracer, v: &BVal, core: &[usize], has_batch: bool| -> Val {
+            let mut target = prefix.clone();
+            target.extend(&per_batch);
+            target.extend(core);
+            let mut dims: Vec<usize> = (0..v.bdims).collect();
+            if has_batch {
+                dims.extend(k..k + per_shape(v).len());
+            } else {
+                dims.extend(nb..nb + core.len());
+            }
+            t.broadcast_along(&v.val, &target, dims)
+        };
+        let av = lift(self, &a, core_a, pa.len() > 2);
+        let bv = lift(self, &b, core_b, pb.len() > 2);
+        let batch: Vec<usize> = (0..nb).collect();
+        let val = self.dot(&av, &bv, batch.clone(), batch, vec![nb + 1], vec![nb]);
+        BVal { val, bdims: a.bdims.max(b.bdims) }
     }
 
     pub fn reduce(&mut self, reducer: &str, init: f64, v: &Val, axes: &[usize]) -> Val {

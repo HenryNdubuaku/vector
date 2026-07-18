@@ -27,8 +27,8 @@ module Block(tokens, dim, heads, hdim):
     q = transpose(reshape(self.query(x), tokens, heads, hdim), 1, 0, 2)
     k = transpose(reshape(self.key(x), tokens, heads, hdim), 1, 0, 2)
     v = transpose(reshape(self.value(x), tokens, heads, hdim), 1, 0, 2)
-    scores = vmap(matmul, q, transpose(k, 0, 2, 1)) / sqrt(hdim)
-    merged = transpose(vmap(matmul, vmap(softmax_rows, scores), v), 1, 0, 2)
+    scores = matmul(q, transpose(k, 0, 2, 1)) / sqrt(hdim)
+    merged = transpose(matmul(softmax(scores), v), 1, 0, 2)
     self.out_proj(reshape(merged, tokens, dim))
 
   forward(self, x):
@@ -71,7 +71,7 @@ test_y = load("https://ossci-datasets.s3.amazonaws.com/mnist/t10k-labels-idx1-ub
 
 function get_batch(images, labels, count):
   idx = floor(uniform(count) * len(images))
-  {x: take(images, idx), y: take(labels, idx)}
+  {x: images[idx], y: labels[idx]}
 
 function train_chunk(state, images, labels, lr, count, steps):
   for step in 0..steps:

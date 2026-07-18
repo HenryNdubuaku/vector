@@ -266,6 +266,45 @@ impl Tracer {
                     die("slicing needs rank >= 1");
                 }
                 let n = x.val.shape[0];
+                let runtime = [lo, hi].iter().any(|b| {
+                    b.as_ref().is_some_and(|e| self.try_num(e, env).is_none())
+                });
+                if runtime {
+                    let (Some(lo_e), Some(hi_e)) = (lo, hi) else {
+                        die("slice bounds must be compile-time constants, or x[start : start + width] with a static width");
+                    };
+                    let width = match hi_e.as_ref() {
+                        Expr::Bin(crate::parser::Op::Add, a, b) if **a == **lo_e => self.try_num(b, env),
+                        Expr::Bin(crate::parser::Op::Add, a, b) if **b == **lo_e => self.try_num(a, env),
+                        _ => None,
+                    };
+                    let Some(width) = width else {
+                        die("slice bounds must be compile-time constants, or x[start : start + width] with a static width");
+                    };
+                    if width.fract() != 0.0 || width <= 0.0 || width > n as f64 {
+                        die(&format!("slice width {} out of range for length {}", width, n));
+                    }
+                    let size = width as usize;
+                    let start = self.trace(lo_e, env, fns).tensor("slice start");
+                    if start.bdims != 0 || start.val.shape.len() > 1 {
+                        die("slice start must be a scalar or a vector of starts");
+                    }
+                    if let [count] = start.val.shape[..] {
+                        let idx = self.convert(&start.val, Dtype::I64);
+                        let mut shape = vec![count, size];
+                        shape.extend(&x.val.shape[1..]);
+                        let val = self.emit(OpKind::Gather(size), vec![x.val.id, idx.id], shape.clone(), x.val.dtype);
+                        return TVal::Tensor(BVal { val, bdims: 0 });
+                    }
+                    let idx = self.convert(&start.val, Dtype::I64);
+                    let iota = self.emit(OpKind::Iota, vec![], vec![size], Dtype::I32);
+                    let offsets = self.convert(&iota, Dtype::I64);
+                    let indices = self.ewise("add", offsets, idx);
+                    let mut shape = vec![size];
+                    shape.extend(&x.val.shape[1..]);
+                    let val = self.emit(OpKind::Gather(1), vec![x.val.id, indices.id], shape.clone(), x.val.dtype);
+                    return TVal::Tensor(BVal { val, bdims: 0 });
+                }
                 let bound = |t: &Tracer, e: &Option<Box<Expr>>, default: usize| -> usize {
                     let Some(e) = e else { return default };
                     let v = t.num_lit(e, env, "slice bound");
@@ -630,6 +669,38 @@ fn named_const(name: &str) -> Option<f64> {
 impl Tracer {
     pub fn static_num(&self, name: &str) -> Option<f64> {
         self.statics.last().and_then(|frame| frame.get(name).copied())
+    }
+
+    pub fn try_num(&self, e: &Expr, env: &HashMap<String, TVal>) -> Option<f64> {
+        match e {
+            Expr::Num(n) => Some(*n),
+            Expr::Neg(inner) => self.try_num(inner, env).map(|v| -v),
+            Expr::Bin(op, a, b) => {
+                let a = self.try_num(a, env)?;
+                let b = self.try_num(b, env)?;
+                Some(match op {
+                    crate::parser::Op::Add => a + b,
+                    crate::parser::Op::Sub => a - b,
+                    crate::parser::Op::Mul => a * b,
+                    crate::parser::Op::Div => a / b,
+                })
+            }
+            Expr::Var(s) => {
+                if let Some(TVal::Tensor(b)) = env.get(s) {
+                    if b.val.shape.is_empty() {
+                        if let OpKind::Constant(n) = self.nodes[b.val.id].kind {
+                            return Some(n);
+                        }
+                    }
+                    return None;
+                }
+                if env.contains_key(s) {
+                    return None;
+                }
+                self.static_num(s).or_else(|| named_const(s))
+            }
+            _ => None,
+        }
     }
 
     pub fn num_lit(&self, e: &Expr, env: &HashMap<String, TVal>, what: &str) -> f64 {
