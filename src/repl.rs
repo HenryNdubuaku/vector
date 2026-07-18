@@ -5,7 +5,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use crate::emit::build_module;
 use crate::graph::{Dtype, InputSource, ModTag, OpKind, TVal, Val};
 use crate::lexer::{lex, Tok};
-use crate::linear;
+use crate::stdlib;
 use crate::npy::{input_host_buffer, InputSpec};
 use crate::parser::{Decl, Expr, ModuleDecl, Parser};
 use crate::runtime::{Engine, Tensor};
@@ -28,7 +28,7 @@ struct Session {
 }
 
 pub fn run_repl() {
-    let (fns, modules) = linear::stdlib();
+    let (fns, modules) = stdlib::stdlib();
     let mut session = Session {
         engine: Engine::new(),
         fns,

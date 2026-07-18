@@ -1,0 +1,32 @@
+module Linear(in_size, out_size):
+  w = glorot_uniform(in_size, out_size)
+  b = zeros(out_size)
+
+  forward(self, x):
+    matmul(x, self.w) + self.b
+
+module LayerNorm(dim):
+  gain = zeros(dim) + 1.0
+  bias = zeros(dim)
+
+  forward(self, x):
+    vmap(token_norm, {gain: self.gain, bias: self.bias}, x)
+
+module Embedding(count, dim):
+  w = randn(count, dim) * 0.02
+
+  forward(self, ids):
+    take(self.w, ids)
+
+function layer_norm(x, g, b):
+  (x - mean(x)) / sqrt(var(x) + 0.00001) * g + b
+
+function token_norm(params, token):
+  layer_norm(token, params.gain, params.bias)
+
+function mse(pred, target):
+  d = pred - target
+  mean(d * d)
+
+function cross_entropy(logits, target):
+  logsumexp(logits) - logits[target]

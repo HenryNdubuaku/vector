@@ -9,7 +9,7 @@ mod graph;
 mod image;
 mod imports;
 mod lexer;
-mod linear;
+mod stdlib;
 mod net;
 mod npy;
 mod parser;
@@ -141,7 +141,7 @@ fn compile(path: &str) -> (String, Vec<Option<InputSpec>>, Vec<PrintSpec>, Vec<S
             die(&format!("{} is defined in both an import and {}", name, path));
         }
     }
-    let (mut fns, mut modules) = linear::stdlib();
+    let (mut fns, mut modules) = stdlib::stdlib();
     fns.extend(import_fns);
     fns.extend(prog.fns);
     modules.extend(import_modules);

@@ -1,0 +1,37 @@
+function clip(x, lo, hi):
+  minimum(maximum(x, lo), hi)
+
+function clip_by_norm(x, max_norm):
+  x * minimum(1.0, max_norm / norm(x))
+
+function cosine_decay(lr, step, total):
+  lr * 0.5 * (1.0 + cos(pi * step / total))
+
+function warmup(lr, step, steps):
+  lr * minimum(1.0, step / steps)
+
+function adam_init(params):
+  {p: params, m: params * 0.0, v: params * 0.0, k: 0.0}
+
+function adam(st, g, lr):
+  m = 0.9 * st.m + 0.1 * g
+  v = 0.999 * st.v + 0.001 * g * g
+  k = st.k + 1.0
+  mh = m / (1.0 - pow(0.9, k))
+  vh = v / (1.0 - pow(0.999, k))
+  {p: st.p - lr * mh / (sqrt(vh) + 0.00000001), m: m, v: v, k: k}
+
+function adamw(st, g, lr, decay):
+  m = 0.9 * st.m + 0.1 * g
+  v = 0.999 * st.v + 0.001 * g * g
+  k = st.k + 1.0
+  mh = m / (1.0 - pow(0.9, k))
+  vh = v / (1.0 - pow(0.999, k))
+  {p: st.p - lr * (mh / (sqrt(vh) + 0.00000001) + decay * st.p), m: m, v: v, k: k}
+
+function sgd_init(params):
+  {p: params, m: params * 0.0}
+
+function sgd(st, g, lr, momentum):
+  m = momentum * st.m + g
+  {p: st.p - lr * m, m: m}

@@ -21,7 +21,7 @@ fn builtin_names() -> Vec<String> {
 }
 
 fn stdlib_names() -> Vec<String> {
-    let src = fs::read_to_string("src/linear.rs").unwrap();
+    let src = ["lib/core.vec", "lib/nn.vec", "lib/optim.vec"].iter().map(|p| fs::read_to_string(p).unwrap()).collect::<Vec<_>>().join("\n");
     let mut names = Vec::new();
     for line in src.lines() {
         let trimmed = line.trim();

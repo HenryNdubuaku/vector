@@ -1,0 +1,32 @@
+function relu(x):
+  maximum(x, 0.0)
+
+function sigmoid(x):
+  1.0 / (1.0 + exp(-x))
+
+function logsumexp(x):
+  m = max(x)
+  m + log(sum(exp(x - m)))
+
+function softmax(x):
+  e = exp(x - max(x))
+  e / sum(e)
+
+function softmax_rows(rows):
+  vmap(softmax, rows)
+
+function var(x):
+  d = x - mean(x)
+  mean(d * d)
+
+function std(x):
+  sqrt(var(x))
+
+function norm(x):
+  sqrt(sum(x * x))
+
+function permutation(n):
+  argsort(uniform(n))
+
+function random_windows(data, count, size):
+  slice(data, floor(uniform(count) * (len(data) - size + 1.0)), size)
