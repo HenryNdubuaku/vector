@@ -2,28 +2,13 @@
 
 The core items are ordered: each unblocks the ones after it. The ecosystem tracks are independent of the core and of each other, contributors can pick any of them up.
 
-## Text and tokenizers 
-Tokenization is data prep, not differentiable compute — it lives at the boundary with the other codecs, never in the graph. No strings in the language.
-- [x] `load("data.txt")` → byte tensor; `save(x, "out.txt")` writes one; byte-level models need no tokenizer at all (vocab 256)
-- [x] `tokenize("data.txt", "tokenizer.json")` → id tensor; `print(detokenize(ids, "tokenizer.json"))` for generated text — byte-level BPE (gpt-2 family), verified id-exact against tiktoken incl. contractions/unicode/whitespace; full shakespeare tokenizes in ~0.1s
-- [x] `print(text(x))` renders byte tensors as text; `bincount(values, bins)` exposed (scatter-add)
-- [x] Tokenizers from scratch IN vector proved out: bincount pair counts + stable-argsort compaction — tests/cases/bpe.vec is a working bpe trainer in 30 lines
-- [ ] Non-byte-level tokenizers (sentencepiece/metaspace, llama family) — vector dies loudly on them for now
-
-## The payoff demo: a small GPT in vector
-Byte-level Shakespeare in `example/` — the artifact that makes people install it, and the load test that flushes out remaining gaps.
-- [x] example/gpt.vec: 2-block multi-head transformer, layernorm, adam with bias correction, causal mask — all in vector source; trains to loss ~1.8 and samples structured pseudo-shakespeare in ~15s cpu / ~7s metal
-- [x] The load test worked: it flushed out and fixed — vmap record-passthrough + depth lifting (weights stay unmapped, `vmap(step, model, xb)`), negative literal indexing `x[-1]`, compile-time arithmetic on constants (`reshape(x, h * w)`), .txt/.json urls in load()
-- [x] tests/cases/attention.vec pins the transformer machinery deterministically (trace-time weights, grad flows, update decreases loss)
-- [ ] Promote to stdlib in item 4: layernorm, cross_entropy, adam, attention (the demo's lnr/xent/train_chunk/attend are the drafts)
-
 ## Staged loop execution
-The standing architectural item — becomes necessary once training runs take minutes (which the GPT demo will cause). Design premise: staging must not surrender the single-dispatch performance — stages exchange device buffer handles, never host data.
+The standing architectural item — becomes necessary once training runs take minutes. Design premise: staging must not surrender the single-dispatch performance — stages exchange device buffer handles, never host data.
 - [ ] Split programs at top-level loop boundaries: prefix / body / suffix executables, host-driven
 - [ ] Loop-carried state stays device-resident and is donated (input/output aliasing, what `jax.jit(donate_argnums)` uses) so the step executable updates weights in place instead of copying
 - [ ] Async dispatch: issue the next step while the host handles the previous one; block only where a value is observed (print, save, plot) — prefetching the next batch falls out of this
 - [ ] Live per-epoch printing and a progress bar (rate, ETA); the buffered-print syntax goes live unchanged
-- [ ] Checkpoint-every-k-epochs, early stopping (uses `while cond:` from item 2)
+- [ ] Checkpoint-every-k-epochs, early stopping (`while cond:` exists)
 - [ ] Same treatment for the repl: session values become device buffer handles (kills the D2H/H2D round-trip per chunk)
 
 ## Mixed precision
@@ -31,15 +16,14 @@ The biggest raw lever left on accelerators (2–4x matmul throughput); whole-gra
 - [ ] bf16 policy: params and reductions stay f32, dot/elementwise compute in bf16 — converts inserted systematically at emission
 - [ ] Surface: `--bf16` flag or per-module policy; f32 stays the default everywhere
 - [ ] Read bf16 safetensors (convert on load) — pretrained checkpoints are increasingly bf16
-- [ ] Validate on the GPT demo: bf16-vs-f32 loss curves agree, measure the speedup per backend
+- [ ] Validate on the gpt example: bf16-vs-f32 loss curves agree, measure the speedup per backend
 
-## Convolutions and vision
-The one op-family gap that closes off a whole domain; everything else in vision is composition. Already landed on the way: examples/vit.vec (mnist vision transformer, ~95% test accuracy in ~15s cpu — patchify is reshape+transpose, no convs needed) and `.gz` idx loading (the mnist files, decoded by the PNG codec's inflate).
-- [x] conv(x, kernel, stride, padding) → stablehlo.convolution; both VJPs (input grad = lhs-dilated conv with reversed io-swapped kernel, kernel grad = rhs-dilated conv of transposed operands) — verified exact by hand and on metal; stdlib `Conv(size, in, out, stride)` module with same-padding; examples/cnn.vec = spoken-digit CNN at ~93% in ~5s
+## Vision leftovers
+Convolutions landed (stride-2 convs downsample, so nothing here blocks CNNs — examples/cnn.vec trains today); these round out the domain.
 - [ ] max_pool / avg_pool → stablehlo.reduce_window; max_pool VJP = select_and_scatter
-- [ ] pad(x, ...) builtin (convs and sequence work both need it)
+- [ ] pad(x, ...) builtin (sequence work needs it too)
 - [ ] Batchnorm question: running stats are mutable state — decide the functional idiom (state-in-record, flax-style) before promising the layer
-- [ ] Small CNN on real images end to end (mnist-scale; the PNG codec already loads data) — where it demos is your call
+- [ ] A CNN on real images end to end (mnist is already loadable) — where it demos is your call
 
 ## Distributed ML
 Enter with GSPMD: annotate shardings, XLA partitions the graph and inserts collectives — vector's whole-program graph is the ideal input.
@@ -79,6 +63,8 @@ Registry-free to start, the way Go proved out: a package is a git repo.
 - [ ] Label starter-sized items here and in issues as good-first
 
 ## Standing / smaller
+- [ ] Non-byte-level tokenizers (sentencepiece/metaspace, the llama family) — tokenize() dies loudly on them for now
+- [ ] Indexing rank-3+ operands (`images[idx]` on `[n, h, w]`) — take handles rank 1–2 today, flatten first
 - [ ] Vendored CUDA runtime: `vector setup` downloads NVIDIA redist libs into `~/.vector/cuda` (XLA already searches that path) — kills the apt/LD_LIBRARY_PATH dance
 - [ ] Numerics check mode: opt-in flag that dies loudly on NaN/inf in any output, naming the op — debugging parity with torch's anomaly mode
 - [ ] cumsum is O(n²) matmul — re-lower as a log-depth scan before GPT-scale sequence lengths
