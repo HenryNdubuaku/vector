@@ -7,7 +7,7 @@ sc = Scale(3)
 print(sc([1.0, 2.0]))
 print(sc.s)
 
-fn l(m):
+function l(m):
   sum(m([2.0]))
 
 print(grad(l, sc))
@@ -33,7 +33,7 @@ module Pair():
 p = Pair()
 print(p([1.0]))
 
-fn pl(m):
+function pl(m):
   sum(m([1.0]))
 
 print(grad(pl, p))

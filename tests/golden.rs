@@ -89,7 +89,7 @@ fn size_one_stretching_is_rejected() {
 #[test]
 fn grad_requires_scalar_output() {
     let path = std::env::temp_dir().join("vector_grad_nonscalar.vec");
-    fs::write(&path, "fn f(x):\n  x * 2.0\n\nprint(grad(f, [1.0, 2.0]))\n").unwrap();
+    fs::write(&path, "function f(x):\n  x * 2.0\n\nprint(grad(f, [1.0, 2.0]))\n").unwrap();
     let output = run_vector(&[path.to_str().unwrap()]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
@@ -111,7 +111,7 @@ fn mixed_depth_vmap_args_lift() {
     let path = std::env::temp_dir().join("vector_mixed_vmap.vec");
     fs::write(
         &path,
-        "fn f(a, b):\n  a * b\n\nfn g(r):\n  vmap(f, r, [1.0, 2.0])\n\nprint(vmap(g, [[1.0, 2.0], [3.0, 4.0]]))\n",
+        "function f(a, b):\n  a * b\n\nfunction g(r):\n  vmap(f, r, [1.0, 2.0])\n\nprint(vmap(g, [[1.0, 2.0], [3.0, 4.0]]))\n",
     )
     .unwrap();
     let output = run_vector(&[path.to_str().unwrap()]);
@@ -123,7 +123,7 @@ fn mixed_depth_vmap_args_lift() {
 #[test]
 fn print_inside_nested_loops_fails_loud() {
     let output = run_vector_src("vector_print_nested.vec",
-        "fn inner(x):\n  y = x\n  for j in 0..2:\n    y = y + 1.0\n    print(y)\n  y\n\nw = 0.0\nfor i in 0..2:\n  w = inner(w)\nprint(w)\n");
+        "function inner(x):\n  y = x\n  for j in 0..2:\n    y = y + 1.0\n    print(y)\n  y\n\nw = 0.0\nfor i in 0..2:\n  w = inner(w)\nprint(w)\n");
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!output.status.success());
     assert!(stderr.contains("nested loops"), "{}", stderr);
@@ -352,8 +352,8 @@ fn import_shares_module_across_programs() {
 
 #[test]
 fn import_resolves_transitively() {
-    write_temp("vector_lib_a.vec", "import vector_lib_b\n\nfn double_sq(x):\n  sq(x) * 2.0\n");
-    write_temp("vector_lib_b.vec", "fn sq(x):\n  x * x\n");
+    write_temp("vector_lib_a.vec", "import vector_lib_b\n\nfunction double_sq(x):\n  sq(x) * 2.0\n");
+    write_temp("vector_lib_b.vec", "function sq(x):\n  x * x\n");
     let out = run_vector_src("vector_imp_trans.vec",
         "import vector_lib_a\n\nprint(double_sq(3.0))\nprint(sq(4.0))\n");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -362,8 +362,8 @@ fn import_resolves_transitively() {
 
 #[test]
 fn circular_import_fails_loud() {
-    write_temp("vector_lib_c1.vec", "import vector_lib_c2\n\nfn f(x):\n  x\n");
-    write_temp("vector_lib_c2.vec", "import vector_lib_c1\n\nfn g(x):\n  x\n");
+    write_temp("vector_lib_c1.vec", "import vector_lib_c2\n\nfunction f(x):\n  x\n");
+    write_temp("vector_lib_c2.vec", "import vector_lib_c1\n\nfunction g(x):\n  x\n");
     let out = run_vector_src("vector_imp_circ.vec", "import vector_lib_c1\n\nprint(f(1.0))\n");
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(!out.status.success());
@@ -372,7 +372,7 @@ fn circular_import_fails_loud() {
 
 #[test]
 fn import_with_top_level_code_fails_loud() {
-    write_temp("vector_lib_body.vec", "fn f(x):\n  x\n\nprint(f(1.0))\n");
+    write_temp("vector_lib_body.vec", "function f(x):\n  x\n\nprint(f(1.0))\n");
     let out = run_vector_src("vector_imp_body.vec", "import vector_lib_body\n\nprint(f(1.0))\n");
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(!out.status.success());
@@ -381,8 +381,8 @@ fn import_with_top_level_code_fails_loud() {
 
 #[test]
 fn import_name_collision_fails_loud() {
-    write_temp("vector_lib_d1.vec", "fn same(x):\n  x\n");
-    write_temp("vector_lib_d2.vec", "fn same(x):\n  x * 2.0\n");
+    write_temp("vector_lib_d1.vec", "function same(x):\n  x\n");
+    write_temp("vector_lib_d2.vec", "function same(x):\n  x * 2.0\n");
     let out = run_vector_src("vector_imp_coll.vec",
         "import vector_lib_d1\nimport vector_lib_d2\n\nprint(same(1.0))\n");
     let stderr = String::from_utf8(out.stderr).unwrap();
@@ -680,7 +680,7 @@ fn repl_persists_state_and_recovers_from_errors() {
 #[test]
 fn repl_trains_across_chunks() {
     let script = "\
-fn loss(w):
+function loss(w):
   d = w - [3.0, 4.0]
   mean(d * d)
 
@@ -706,7 +706,7 @@ fn repl_saves_and_loads() {
 #[test]
 fn repl_imports_libraries() {
     fs::create_dir_all("tests/cases/data").unwrap();
-    fs::write("tests/cases/data/repl_lib.vec", "fn triple(x):\n  x * 3.0\n").unwrap();
+    fs::write("tests/cases/data/repl_lib.vec", "function triple(x):\n  x * 3.0\n").unwrap();
     let (stdout, stderr) = run_repl_script(
         "import tests.cases.data.repl_lib\ntriple(7.0)\n",
     );
@@ -716,7 +716,7 @@ fn repl_imports_libraries() {
 #[test]
 fn repl_redefines_functions() {
     let (stdout, _) = run_repl_script(
-        "fn f(x):\n  x * 2.0\n\nsum(f(3.0))\nfn f(x):\n  x * 10.0\n\nsum(f(3.0))\n",
+        "function f(x):\n  x * 2.0\n\nsum(f(3.0))\nfunction f(x):\n  x * 10.0\n\nsum(f(3.0))\n",
     );
     assert_eq!(stdout, "6 : f32\n30 : f32\n");
 }

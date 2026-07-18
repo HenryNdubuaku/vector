@@ -24,22 +24,22 @@ print(where([1.0, 2.0] == [1.0, 3.0], 1.0, 0.0))
 print(where([1.0, 2.0] != [1.0, 3.0], 1.0, 0.0))
 
 m = [[3.0, 1.0], [0.0, 5.0]]
-fn am(r):
+function am(r):
   argmax(r)
 
 print(vmap(am, m))
 
-fn srt(r):
+function srt(r):
   sort(r)
 
 print(vmap(srt, m))
 
-fn f(v):
+function f(v):
   sum(cumsum(v))
 
 print(grad(f, [1.0, 2.0, 3.0]))
 
-fn g(v):
+function g(v):
   sum(take(v, [2.0, 2.0]))
 
 print(grad(g, [1.0, 2.0, 3.0]))
@@ -94,22 +94,22 @@ Output:
 ## attention
 
 ```python
-fn mm(env, w):
+function mm(env, w):
   matmul(env.x, w)
 
-fn qk(q, k):
+function qk(q, k):
   matmul(q, transpose(k))
 
-fn sm(row):
+function sm(row):
   softmax(row)
 
-fn rows_sm(m):
+function rows_sm(m):
   vmap(sm, m)
 
-fn av(a, v):
+function av(a, v):
   matmul(a, v)
 
-fn attend(p, x):
+function attend(p, x):
   q = vmap(mm, {x: x}, p.wq)
   k = vmap(mm, {x: x}, p.wk)
   v = vmap(mm, {x: x}, p.wv)
@@ -118,15 +118,15 @@ fn attend(p, x):
   heads = vmap(av, att, v)
   sum(vmap(av, heads, p.wo), 0)
 
-fn xent(logits, target):
+function xent(logits, target):
   logsumexp(logits) - sum(one_hot(target, 16) * logits)
 
-fn seq_loss(p, ids, targets):
+function seq_loss(p, ids, targets):
   x = take(p.wte, ids) + p.wpe
   logits = matmul(attend(p, x), p.head)
   mean(vmap(xent, logits, targets))
 
-fn batch_loss(p, idsb, targetsb):
+function batch_loss(p, idsb, targetsb):
   mean(vmap(seq_loss, p, idsb, targetsb))
 
 rows = matmul(reshape(arange(4.0), 4, 1), reshape(zeros(4) + 1.0, 1, 4))
@@ -254,7 +254,7 @@ for i in 0..5:
   acc = acc + i
 print(acc)
 
-fn sq_loss(v):
+function sq_loss(v):
   d = v - 3.0
   sum(d * d)
 
@@ -267,7 +267,7 @@ x = [-1.0, 0.5, 2.0]
 print(where(x > 0.0, x, 0.0))
 print(where(x < 1.0, 1.0, -1.0))
 
-fn hinge_like(h):
+function hinge_like(h):
   sum(where(h > 0.0, h, h * 0.0))
 
 print(grad(hinge_like, [2.0, -3.0]))
@@ -287,7 +287,7 @@ Output:
 ## functions
 
 ```python
-fn norm_sq(xs):
+function norm_sq(xs):
   squares = xs * xs
   sum(squares)
 
@@ -309,17 +309,17 @@ print(take(e, [2.0, 0.0, 2.0]))
 print(take(e, 3.0))
 print(take([10.0, 20.0, 30.0], 1.0))
 
-fn f(w):
+function f(w):
   sum(take(w, [1.0, 1.0, 3.0]))
 
 print(grad(f, reshape(arange(32), 8, 4)))
 
-fn s(v):
+function s(v):
   sum(sort(v) * [1.0, 2.0, 3.0])
 
 print(grad(s, [3.0, 1.0, 2.0]))
 
-fn pick(r):
+function pick(r):
   take(r, [1.0, 0.0])
 
 print(vmap(pick, [[10.0, 20.0], [30.0, 40.0]]))
@@ -347,12 +347,12 @@ print(reshape(arange(6), 2, 3))
 print(sin(0.0))
 print(cos(0.0))
 
-fn s(x):
+function s(x):
   sum(sin(x))
 
 print(grad(s, [0.0, 0.0]))
 
-fn r(x):
+function r(x):
   sum(reshape(x, 4) * [1.0, 2.0, 3.0, 4.0])
 
 print(grad(r, [[1.0, 1.0], [1.0, 1.0]]))
@@ -387,52 +387,52 @@ Output:
 ## grad
 
 ```python
-fn norm_sq(xs):
+function norm_sq(xs):
   sum(xs * xs)
 
 print(grad(norm_sq, [3.0, 4.0]))
 
-fn hinge(x):
+function hinge(x):
   sum(maximum(x, 0.0))
 
 print(grad(hinge, [1.0, -2.0]))
 
-fn mean_sq(x):
+function mean_sq(x):
   mean(x * x)
 
 print(grad(mean_sq, [3.0, 6.0]))
 
-fn lin(w):
+function lin(w):
   sum(matmul([[1.0, 2.0], [3.0, 4.0]], w))
 
 print(grad(lin, [[1.0, 1.0], [1.0, 1.0]]))
 
-fn chain(x):
+function chain(x):
   sum(sqrt(exp(x)))
 
 print(grad(chain, [0.0]))
 
-fn recip(x):
+function recip(x):
   sum(1.0 / x)
 
 print(grad(recip, [2.0]))
 
-fn biased(b):
+function biased(b):
   sum([[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]] + b)
 
 print(grad(biased, [0.0, 0.0, 0.0]))
 
-fn stacked(x):
+function stacked(x):
   sum([x, x] * [2.0, 3.0])
 
 print(grad(stacked, 5.0))
 
-fn first(w, b):
+function first(w, b):
   sum(w * b)
 
 print(grad(first, [1.0, 2.0], [3.0, 4.0]))
 
-fn times_five(x):
+function times_five(x):
   sum(x * 5.0)
 
 print(grad(times_five, [5.0]))
@@ -456,38 +456,38 @@ Output:
 ## grad2
 
 ```python
-fn sq(x):
+function sq(x):
   sum(x * x)
 
-fn dsq(x):
+function dsq(x):
   grad(sq, x)
 
 print(grad(dsq, 3.0))
 
-fn stacked(x):
+function stacked(x):
   sum([x, x] * [2.0, 3.0])
 
-fn dstacked(x):
+function dstacked(x):
   grad(stacked, x)
 
 print(grad(dstacked, 5.0))
 
-fn cube(x):
+function cube(x):
   sum(x * x * x)
 
-fn dcube(x):
+function dcube(x):
   grad(cube, x)
 
-fn ddcube(x):
+function ddcube(x):
   grad(dcube, x)
 
 print(grad(dcube, 2.0))
 print(grad(ddcube, 2.0))
 
-fn growth(x):
+function growth(x):
   sum(exp(x))
 
-fn dgrowth(x):
+function dgrowth(x):
   grad(growth, x)
 
 print(grad(dgrowth, 0.0))
@@ -522,10 +522,15 @@ print(pow([2.0, 3.0], 2.0))
 print(concat([1.0, 2.0], [3.0]))
 print(stack([1.0, 2.0], [3.0, 4.0]))
 
-fn f(x):
+function f(x):
   sum(x[1:3] * 2.0 + pow(x[0], 2.0))
 
 print(grad(f, [1.0, 2.0, 3.0]))
+
+print(len(x))
+print(slice(x, [0.0, 3.0, 7.0], 3))
+win = random_windows(x, 2, 4)
+print(where(sum(abs(win[0][1:] - win[0][:3] - 1.0)) == 0.0, 1.0, 0.0))
 ```
 
 Output:
@@ -543,22 +548,25 @@ Output:
 [1, 2, 3] : f32
 [[1, 2], [3, 4]] : f32
 [4, 2, 2] : f32
+10 : f32
+[[0, 1, 2], [3, 4, 5], [7, 8, 9]] : f32
+1 : f32
 ```
 
 ## jacobian
 
 ```python
-fn poly(x):
+function poly(x):
   x * x * 2.0
 
 print(jacobian(poly, [1.0, 2.0]))
 
-fn affine(x):
+function affine(x):
   matmul([[1.0, 2.0], [3.0, 4.0]], x)
 
 print(jacobian(affine, [5.0, 7.0]))
 
-fn jpoly(x):
+function jpoly(x):
   jacobian(poly, x)
 
 print(vmap(jpoly, [[1.0, 2.0], [3.0, 1.0]]))
@@ -604,7 +612,7 @@ print(m + 0.5)
 print(sum(v * v))
 print(matmul(m, f32([1.0, 1.0])))
 
-fn q(x):
+function q(x):
   sum(x * x)
 
 print(grad(q, v))
@@ -634,7 +642,7 @@ for x in 0.0..1.0 by 0.5:
   print({a: acc, b: x})
 print(acc)
 
-fn f(v):
+function f(v):
   y = v
   for k in 0..2:
     y = y * y
@@ -664,7 +672,7 @@ k 1: 16 : f32
 ## loops
 
 ```python
-fn looped(x):
+function looped(x):
   y = x
   for i in 0..3:
     y = y * y
@@ -672,7 +680,7 @@ fn looped(x):
 
 print(grad(looped, [2.0]))
 
-fn inner_double(x):
+function inner_double(x):
   y = x
   for j in 0..2:
     y = y * 2.0
@@ -700,7 +708,7 @@ for x in 0.0..1.0 by 0.25:
   acc = acc + x
 print(acc)
 
-fn f(v):
+function f(v):
   y = v
   for i in 0..4 by 2:
     y = y * 2.0
@@ -776,7 +784,7 @@ sc = Scale(3)
 print(sc([1.0, 2.0]))
 print(sc.s)
 
-fn l(m):
+function l(m):
   sum(m([2.0]))
 
 print(grad(l, sc))
@@ -802,7 +810,7 @@ module Pair():
 p = Pair()
 print(p([1.0]))
 
-fn pl(m):
+function pl(m):
   sum(m([1.0]))
 
 print(grad(pl, p))
@@ -851,10 +859,66 @@ c: -4 : f32
 c: -8 : f32
 ```
 
+## nn
+
+```python
+print(mse([1.0, 2.0], [0.0, 4.0]))
+print(cross_entropy([1.0, 2.0, 3.0], 2.0))
+print(clip([-5.0, 0.5, 5.0], -1.0, 1.0))
+print(clip_by_norm([3.0, 4.0], 1.0))
+print(cosine_decay(1.0, 5.0, 10.0))
+print(warmup(1.0, 5.0, 10.0))
+print(layer_norm([1.0, 2.0, 3.0], 2.0, 1.0))
+emb = Embedding(8, 4)
+rows = emb([3.0, 3.0, 5.0])
+print(sum(abs(rows[0] - rows[1])))
+print(where(sum(abs(rows[0] - rows[2])) > 0.0, 1.0, 0.0))
+
+u = normal(4096)
+print(where(abs(mean(u)) < 0.1, 1.0, 0.0))
+print(where(abs(std(u) - 1.0) < 0.1, 1.0, 0.0))
+
+function loss(p, x):
+  mse(p.w * x, x * 3.0)
+
+st = adam_init({w: 0.0})
+x = [1.0, 2.0]
+n = 0.0
+while mse(st.p.w * x, x * 3.0) > 0.01:
+  st = adam(st, grad(loss, st.p, x), 0.1)
+  n = n + 1.0
+print(where(n < 500.0, 1.0, 0.0))
+print(where(abs(st.p.w - 3.0) < 0.2, 1.0, 0.0))
+
+s2 = sgd_init({w: 0.0})
+for i in 0..50:
+  s2 = sgd(s2, grad(loss, s2.p, x), 0.05, 0.9)
+print(where(abs(s2.p.w - 3.0) < 0.2, 1.0, 0.0))
+```
+
+Output:
+
+```
+2.5 : f32
+0.4076059 : f32
+[-1, 0.5, 1] : f32
+[0.6, 0.8] : f32
+0.49999997 : f32
+0.5 : f32
+[-1.4494712, 1, 3.4494712] : f32
+0 : f32
+1 : f32
+1 : f32
+1 : f32
+1 : f32
+1 : f32
+1 : f32
+```
+
 ## optimizer
 
 ```python
-fn f(x):
+function f(x):
   sum(x * x)
 
 state = {x: [1.0], m: [0.0]}
@@ -884,7 +948,7 @@ u = uniform(4096)
 print(where(mean(u) > 0.4, 1.0, 0.0) * where(mean(u) < 0.6, 1.0, 0.0))
 print(where(max(u) <= 1.0, 1.0, 0.0) * where(min(u) >= 0.0, 1.0, 0.0))
 
-fn pick(r):
+function pick(r):
   sample(r * 1.0)
 
 logits = zeros(1000, 3) + [0.0, 10.0, 0.0]
@@ -903,7 +967,7 @@ p = permutation(64)
 print(sum(where(sort(p) == arange(64), 1.0, 0.0)))
 print(where(sum(where(p == arange(64), 1.0, 0.0)) < 64.0, 1.0, 0.0))
 
-fn dloss(w):
+function dloss(w):
   mean(dropout(w, 0.25) * w)
 
 g = grad(dloss, zeros(64) + 2.0)
@@ -934,7 +998,7 @@ print(q.a)
 r = p + q
 print(r.b)
 
-fn nsq(p):
+function nsq(p):
   sum(p.a * p.a) + p.b * p.b
 
 print(grad(nsq, p))
@@ -942,7 +1006,7 @@ print(grad(nsq, p))
 nested = {inner: {v: [1.0, 1.0]}, w: 2.0}
 print(nested.inner.v)
 
-fn nloss(n):
+function nloss(n):
   sum(n.inner.v * n.inner.v) * n.w
 
 print(grad(nloss, nested))
@@ -1001,12 +1065,12 @@ print(min(m))
 print(maximum([1.0, 4.0], [3.0, 2.0]))
 print(minimum(2.0, [1.0, 3.0]))
 
-fn peak(x):
+function peak(x):
   max(x)
 
 print(grad(peak, [1.0, 5.0, 3.0]))
 
-fn rowpeaks(x):
+function rowpeaks(x):
   sum(max(x, 1))
 
 print(grad(rowpeaks, [[1.0, 5.0], [7.0, 3.0]]))
@@ -1031,7 +1095,7 @@ Output:
 x = [[0.0, 1.0], [1.0, 0.0]]
 print(resize(x, 4, 4))
 
-fn f(v):
+function f(v):
   sum(resize(v, 4, 4))
 
 print(grad(f, [[0.0, 1.0], [1.0, 0.0]]))
@@ -1039,7 +1103,7 @@ print(grad(f, [[0.0, 1.0], [1.0, 0.0]]))
 m = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]
 print(crop(m, 1, 0, 2, 2))
 
-fn c(v):
+function c(v):
   sum(crop(v, 0, 1, 2, 2))
 
 print(grad(c, [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
@@ -1064,7 +1128,7 @@ m = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
 print(slice(m, 2.0, 1))
 print(floor([1.7, -1.2, 3.0]))
 
-fn pick(x):
+function pick(x):
   sum(slice(x, 1.0, 2))
 
 print(grad(pick, [10.0, 20.0, 30.0, 40.0]))
@@ -1130,7 +1194,7 @@ aab aab
 ## train
 
 ```python
-fn loss(w):
+function loss(w):
   ys = load("tests/cases/data/v.npy")
   d = w - ys
   mean(d * d)
@@ -1155,12 +1219,12 @@ Output:
 m = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 print(transpose(m))
 
-fn f(x):
+function f(x):
   sum(transpose(x) * [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]])
 
 print(grad(f, [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
 
-fn t(r):
+function t(r):
   transpose(r)
 
 print(vmap(t, [[[1.0, 2.0]], [[3.0, 4.0]]]))
@@ -1177,40 +1241,40 @@ Output:
 ## vmap
 
 ```python
-fn double(x):
+function double(x):
   x * 2.0
 
 print(vmap(double, [1.0, 2.0, 3.0]))
 
-fn nsq(v):
+function nsq(v):
   sum(v * v)
 
 print(vmap(nsq, [[3.0, 4.0], [6.0, 8.0]]))
 
-fn dotp(a, b):
+function dotp(a, b):
   sum(a * b)
 
 print(vmap(dotp, [[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]))
 
-fn lin(x):
+function lin(x):
   matmul([[1.0, 0.0], [0.0, 2.0]], x)
 
 print(vmap(lin, [[1.0, 1.0], [2.0, 3.0]]))
 
-fn dnsq(v):
+function dnsq(v):
   grad(nsq, v)
 
 print(vmap(dnsq, [[3.0, 4.0], [1.0, 2.0]]))
 
-fn agg(m):
+function agg(m):
   sum(vmap(nsq, m))
 
 print(grad(agg, [[1.0, 2.0], [3.0, 4.0]]))
 
-fn perl(x):
+function perl(x):
   sum(matmul([[1.0, 2.0], [3.0, 4.0]], x))
 
-fn aggl(m):
+function aggl(m):
   sum(vmap(perl, m))
 
 print(grad(aggl, [[1.0, 1.0], [1.0, 1.0]]))
@@ -1231,20 +1295,20 @@ Output:
 ## vmap_nested
 
 ```python
-fn cell(c):
+function cell(c):
   c * c
 
-fn row(r):
+function row(r):
   vmap(cell, r)
 
 print(vmap(row, [[1.0, 2.0], [3.0, 4.0]]))
 
-fn rowsum(r):
+function rowsum(r):
   sum(vmap(cell, r))
 
 print(vmap(rowsum, [[1.0, 2.0], [3.0, 4.0]]))
 
-fn aggn(m):
+function aggn(m):
   sum(vmap(rowsum, m))
 
 print(grad(aggn, [[1.0, 2.0], [3.0, 4.0]]))

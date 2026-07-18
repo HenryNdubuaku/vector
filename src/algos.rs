@@ -113,7 +113,7 @@ impl Tracer {
         let iv = self.convert(&iv, Dtype::I64);
         let mut shape = vec![iv.shape[0]];
         shape.extend(&x.val.shape[1..]);
-        let val = self.emit(OpKind::Gather, vec![x.val.id, iv.id], shape, x.val.dtype);
+        let val = self.emit(OpKind::Gather(1), vec![x.val.id, iv.id], shape, x.val.dtype);
         let val = if scalar { self.reshape(&val, x.val.shape[1..].to_vec()) } else { val };
         TVal::Tensor(BVal { val, bdims: 0 })
     }

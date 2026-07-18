@@ -1,17 +1,17 @@
-fn cell(c):
+function cell(c):
   c * c
 
-fn row(r):
+function row(r):
   vmap(cell, r)
 
 print(vmap(row, [[1.0, 2.0], [3.0, 4.0]]))
 
-fn rowsum(r):
+function rowsum(r):
   sum(vmap(cell, r))
 
 print(vmap(rowsum, [[1.0, 2.0], [3.0, 4.0]]))
 
-fn aggn(m):
+function aggn(m):
   sum(vmap(rowsum, m))
 
 print(grad(aggn, [[1.0, 2.0], [3.0, 4.0]]))

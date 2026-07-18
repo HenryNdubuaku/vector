@@ -1,4 +1,4 @@
-fn norm_sq(xs):
+function norm_sq(xs):
   squares = xs * xs
   sum(squares)
 

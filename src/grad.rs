@@ -47,14 +47,15 @@ impl Tracer {
                 let s2 = self.emit(OpKind::Sort { axis: 0, num: 2 }, vec![perm.id, iota.id], vec![n], Dtype::F32);
                 let inv = self.emit(OpKind::Proj(1), vec![s2.id], vec![n], Dtype::F32);
                 let idx = self.convert(&inv, Dtype::I64);
-                let dx = self.emit(OpKind::Gather, vec![g.id, idx.id], vec![n], g.dtype);
+                let dx = self.emit(OpKind::Gather(1), vec![g.id, idx.id], vec![n], g.dtype);
                 vec![(ins[0].id, dx)]
             }
-            OpKind::Gather => {
+            OpKind::Gather(1) => {
                 let zeros = self.zeros_like(&ins[0]);
                 let dx = self.emit(OpKind::Scatter, vec![zeros.id, ins[1].id, g.id], ins[0].shape.clone(), ins[0].dtype);
                 vec![(ins[0].id, dx)]
             }
+            OpKind::Gather(_) => die("differentiating through slice with vector starts isn't supported yet"),
             OpKind::Scatter => die("differentiating through scatter isn't supported yet"),
             OpKind::DynUpdateSlice => {
                 die("differentiating through dynamic_update_slice isn't supported yet")

@@ -1,0 +1,32 @@
+print(mse([1.0, 2.0], [0.0, 4.0]))
+print(cross_entropy([1.0, 2.0, 3.0], 2.0))
+print(clip([-5.0, 0.5, 5.0], -1.0, 1.0))
+print(clip_by_norm([3.0, 4.0], 1.0))
+print(cosine_decay(1.0, 5.0, 10.0))
+print(warmup(1.0, 5.0, 10.0))
+print(layer_norm([1.0, 2.0, 3.0], 2.0, 1.0))
+emb = Embedding(8, 4)
+rows = emb([3.0, 3.0, 5.0])
+print(sum(abs(rows[0] - rows[1])))
+print(where(sum(abs(rows[0] - rows[2])) > 0.0, 1.0, 0.0))
+
+u = normal(4096)
+print(where(abs(mean(u)) < 0.1, 1.0, 0.0))
+print(where(abs(std(u) - 1.0) < 0.1, 1.0, 0.0))
+
+function loss(p, x):
+  mse(p.w * x, x * 3.0)
+
+st = adam_init({w: 0.0})
+x = [1.0, 2.0]
+n = 0.0
+while mse(st.p.w * x, x * 3.0) > 0.01:
+  st = adam(st, grad(loss, st.p, x), 0.1)
+  n = n + 1.0
+print(where(n < 500.0, 1.0, 0.0))
+print(where(abs(st.p.w - 3.0) < 0.2, 1.0, 0.0))
+
+s2 = sgd_init({w: 0.0})
+for i in 0..50:
+  s2 = sgd(s2, grad(loss, s2.p, x), 0.05, 0.9)
+print(where(abs(s2.p.w - 3.0) < 0.2, 1.0, 0.0))

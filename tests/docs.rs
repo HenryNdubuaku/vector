@@ -28,7 +28,7 @@ fn stdlib_names() -> Vec<String> {
         if !trimmed.ends_with(':') {
             continue;
         }
-        for prefix in ["fn ", "module "] {
+        for prefix in ["function ", "module "] {
             if let Some(rest) = trimmed.strip_prefix(prefix) {
                 if let Some(name) = rest.split('(').next() {
                     names.push(name.trim().to_string());

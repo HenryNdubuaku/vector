@@ -60,18 +60,23 @@ fn node_text(node: &Node, nodes: &[Node]) -> String {
         OpKind::While { .. } => unreachable!("while is emitted by the region writer"),
         OpKind::Sort { .. } => unreachable!("sort is emitted by the region writer"),
         OpKind::Scatter => unreachable!("scatter is emitted by the region writer"),
-        OpKind::Gather => {
+        OpKind::Gather(window) => {
             let operand = &nodes[node.inputs[0]].shape;
-            let offsets = if operand.len() > 1 {
-                format!("offset_dims = [{}], ", join(&(1..operand.len()).collect::<Vec<_>>()))
-            } else {
-                String::new()
-            };
-            let mut sizes = vec![1];
+            let mut sizes = vec![*window];
             sizes.extend(&operand[1..]);
+            let dims = if *window == 1 {
+                let offsets = if operand.len() > 1 {
+                    format!("offset_dims = [{}], ", join(&(1..operand.len()).collect::<Vec<_>>()))
+                } else {
+                    String::new()
+                };
+                format!("{}collapsed_slice_dims = [0], ", offsets)
+            } else {
+                format!("offset_dims = [{}], ", join(&(1..node.shape.len()).collect::<Vec<_>>()))
+            };
             format!(
-                "\"stablehlo.gather\"({}, {}) {{dimension_numbers = #stablehlo.gather<{}collapsed_slice_dims = [0], start_index_map = [0], index_vector_dim = 1>, indices_are_sorted = false, slice_sizes = array<i64: {}>}} : ({}, {}) -> {}",
-                arg(0), arg(1), offsets, join(&sizes), t(0), t(1), out
+                "\"stablehlo.gather\"({}, {}) {{dimension_numbers = #stablehlo.gather<{}start_index_map = [0], index_vector_dim = 1>, indices_are_sorted = false, slice_sizes = array<i64: {}>}} : ({}, {}) -> {}",
+                arg(0), arg(1), dims, join(&sizes), t(0), t(1), out
             )
         }
         OpKind::Iota => format!("stablehlo.iota dim = 0 : {}", out),

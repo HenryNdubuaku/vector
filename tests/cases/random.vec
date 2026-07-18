@@ -6,7 +6,7 @@ u = uniform(4096)
 print(where(mean(u) > 0.4, 1.0, 0.0) * where(mean(u) < 0.6, 1.0, 0.0))
 print(where(max(u) <= 1.0, 1.0, 0.0) * where(min(u) >= 0.0, 1.0, 0.0))
 
-fn pick(r):
+function pick(r):
   sample(r * 1.0)
 
 logits = zeros(1000, 3) + [0.0, 10.0, 0.0]
@@ -25,7 +25,7 @@ p = permutation(64)
 print(sum(where(sort(p) == arange(64), 1.0, 0.0)))
 print(where(sum(where(p == arange(64), 1.0, 0.0)) < 64.0, 1.0, 0.0))
 
-fn dloss(w):
+function dloss(w):
   mean(dropout(w, 0.25) * w)
 
 g = grad(dloss, zeros(64) + 2.0)

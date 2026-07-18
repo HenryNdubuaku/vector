@@ -150,7 +150,8 @@ pub fn lex(src: &str) -> Lexed {
                     s.push(chars[i]); i += 1; col += 1;
                 }
                 let t = match s.as_str() {
-                    "fn" => Tok::Fn,
+                    "function" => Tok::Fn,
+                    "fn" => die("'fn' is spelled 'function' in vector"),
                     "module" => Tok::Module,
                     "import" => Tok::Import,
                     "for" => Tok::For,

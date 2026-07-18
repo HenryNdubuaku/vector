@@ -17,22 +17,22 @@ print(where([1.0, 2.0] == [1.0, 3.0], 1.0, 0.0))
 print(where([1.0, 2.0] != [1.0, 3.0], 1.0, 0.0))
 
 m = [[3.0, 1.0], [0.0, 5.0]]
-fn am(r):
+function am(r):
   argmax(r)
 
 print(vmap(am, m))
 
-fn srt(r):
+function srt(r):
   sort(r)
 
 print(vmap(srt, m))
 
-fn f(v):
+function f(v):
   sum(cumsum(v))
 
 print(grad(f, [1.0, 2.0, 3.0]))
 
-fn g(v):
+function g(v):
   sum(take(v, [2.0, 2.0]))
 
 print(grad(g, [1.0, 2.0, 3.0]))

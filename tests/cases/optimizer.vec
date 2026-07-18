@@ -1,4 +1,4 @@
-fn f(x):
+function f(x):
   sum(x * x)
 
 state = {x: [1.0], m: [0.0]}

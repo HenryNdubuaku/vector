@@ -26,11 +26,11 @@ Byte-level Shakespeare in `example/` — the artifact that makes people install 
 
 ## 4. NN training stdlib
 What a torch/jax user reaches for daily, written in vector source (records already express optimizer state); harvests what the GPT demo proves out, while the code is fresh.
-- [ ] Optimizers: adam, adamw, sgd with momentum — state as a record, `state, params = adam(state, params, grads, lr)` shape
-- [ ] Losses: cross_entropy (from logits, via logsumexp), mse
-- [ ] Schedules: cosine decay, linear warmup — plain functions of the step
-- [ ] `normal(dims...)` runtime sampling (Box-Muller over uniform — pure stdlib source); unlocks VAEs/diffusion later
-- [ ] Gradient clipping: clip(x, lo, hi) and clip_by_norm (norm exists)
+- [x] Optimizers: adam, adamw, sgd with momentum — state record with params at `.p`, step count carried inside: `st = adam_init(model)`, `st = adam(st, g, lr)`
+- [x] Losses: `cross_entropy(logits, target)` = logsumexp - logits[target] (indexing, no one_hot depth needed), mse
+- [x] Schedules: cosine_decay, warmup; clipping: clip, clip_by_norm (tensor-shaped; whole-record norm needs a record reduction — future)
+- [x] `normal(dims...)` builtin (Box-Muller over threefry uniform; dims are variadic so it can't be stdlib source); layer_norm promoted from the demo
+- [x] example/gpt.vec now uses the stdlib (adam_init/adam, cross_entropy, layer_norm) — trains identically, ~10 lines shorter; tests/cases/nn.vec pins values + convergence
 
 ## 5. Staged loop execution
 The standing architectural item — becomes necessary once training runs take minutes (which the GPT demo will cause). Design premise: staging must not surrender the single-dispatch performance — stages exchange device buffer handles, never host data.

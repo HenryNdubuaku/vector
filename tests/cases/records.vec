@@ -6,7 +6,7 @@ print(q.a)
 r = p + q
 print(r.b)
 
-fn nsq(p):
+function nsq(p):
   sum(p.a * p.a) + p.b * p.b
 
 print(grad(nsq, p))
@@ -14,7 +14,7 @@ print(grad(nsq, p))
 nested = {inner: {v: [1.0, 1.0]}, w: 2.0}
 print(nested.inner.v)
 
-fn nloss(n):
+function nloss(n):
   sum(n.inner.v * n.inner.v) * n.w
 
 print(grad(nloss, nested))

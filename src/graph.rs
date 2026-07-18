@@ -96,7 +96,7 @@ pub enum OpKind {
     Compare(String),
     Select,
     Sort { axis: usize, num: usize },
-    Gather,
+    Gather(usize),
     Scatter,
     Concat(usize),
     Slice(usize, usize, usize),

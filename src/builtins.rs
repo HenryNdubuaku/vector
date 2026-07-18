@@ -224,12 +224,19 @@ impl Tracer {
                     die("slice needs rank >= 1");
                 }
                 let start = self.trace(&args[1], env, fns).tensor("slice start");
-                if start.bdims != 0 || !start.val.shape.is_empty() {
-                    die("slice start must be a scalar");
+                if start.bdims != 0 || start.val.shape.len() > 1 {
+                    die("slice start must be a scalar or a vector of starts");
                 }
                 let size = self.int_lit(&args[2], env, "slice size");
                 if size == 0 || size > x.val.shape[0] {
                     die(&format!("slice size {} out of range for leading dim {}", size, x.val.shape[0]));
+                }
+                if let [count] = start.val.shape[..] {
+                    let idx = self.convert(&start.val, Dtype::I64);
+                    let mut shape = vec![count, size];
+                    shape.extend(&x.val.shape[1..]);
+                    let val = self.emit(OpKind::Gather(size), vec![x.val.id, idx.id], shape.clone(), x.val.dtype);
+                    return TVal::Tensor(BVal { val, bdims: 0 });
                 }
                 let idx = self.convert(&start.val, Dtype::I64);
                 let iota = self.emit(OpKind::Iota, vec![], vec![size], Dtype::I32);
@@ -237,7 +244,7 @@ impl Tracer {
                 let indices = self.ewise("add", offsets, idx);
                 let mut shape = vec![size];
                 shape.extend(&x.val.shape[1..]);
-                let val = self.emit(OpKind::Gather, vec![x.val.id, indices.id], shape.clone(), x.val.dtype);
+                let val = self.emit(OpKind::Gather(1), vec![x.val.id, indices.id], shape.clone(), x.val.dtype);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
             "exp" | "log" | "tanh" | "sqrt" | "sin" | "cos" | "floor" => {
@@ -357,6 +364,18 @@ impl Tracer {
                 }
                 let v = self.trace(&args[0], env, fns);
                 self.tunary("abs", &v)
+            }
+            "len" => {
+                if args.len() != 1 {
+                    die(&format!("len expects 1 arg, got {}", args.len()));
+                }
+                let v = self.trace(&args[0], env, fns).tensor("len");
+                let per = per_shape(&v);
+                if per.is_empty() {
+                    die("len needs rank >= 1");
+                }
+                let val = self.constant(per[0] as f64, Dtype::F32);
+                TVal::Tensor(BVal { val, bdims: 0 })
             }
             "pow" => {
                 if args.len() != 2 {
@@ -567,6 +586,25 @@ impl Tracer {
                 let val = self.rng_uniform(&dims);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
+            "normal" => {
+                if args.is_empty() {
+                    die("normal expects dimension literals");
+                }
+                let dims: Vec<usize> = args.iter().map(|a| self.int_lit(a, env, "dimension")).collect();
+                let u1 = self.rng_uniform(&dims);
+                let u2 = self.rng_uniform(&dims);
+                let floor_c = self.constant(1e-7, Dtype::F32);
+                let safe = self.ewise("maximum", u1, floor_c);
+                let ln = self.unary("log", &safe);
+                let neg2 = self.constant(-2.0, Dtype::F32);
+                let r2 = self.ewise("multiply", ln, neg2);
+                let r = self.unary("sqrt", &r2);
+                let tau = self.constant(std::f64::consts::TAU, Dtype::F32);
+                let angle = self.ewise("multiply", u2, tau);
+                let cosv = self.unary("cosine", &angle);
+                let val = self.ewise("multiply", r, cosv);
+                TVal::Tensor(BVal { val, bdims: 0 })
+            }
             "dropout" => {
                 if args.len() != 2 {
                     die(&format!("dropout expects (x, rate), got {} args", args.len()));
@@ -645,6 +683,23 @@ impl Tracer {
                 self.take_val(x, idx)
             }
             "transpose" => {
+                if args.len() > 1 {
+                    let v = self.trace(&args[0], env, fns).tensor("transpose");
+                    let per = per_shape(&v);
+                    let axes: Vec<usize> = args[1..].iter().map(|a| self.int_lit(a, env, "transpose axis")).collect();
+                    let mut seen: Vec<usize> = axes.clone();
+                    seen.sort();
+                    if seen != (0..per.len()).collect::<Vec<usize>>() {
+                        die(&format!("transpose axes {:?} must be a permutation of 0..{}", axes, per.len()));
+                    }
+                    let k = v.bdims;
+                    let mut perm: Vec<usize> = (0..k).collect();
+                    perm.extend(axes.iter().map(|a| k + a));
+                    let mut shape: Vec<usize> = v.val.shape[..k].to_vec();
+                    shape.extend(axes.iter().map(|&a| per[a]));
+                    let val = self.emit(OpKind::Transpose(perm), vec![v.val.id], shape, v.val.dtype);
+                    return TVal::Tensor(BVal { val, bdims: k });
+                }
                 if args.len() != 1 {
                     die(&format!("transpose expects 1 arg, got {}", args.len()));
                 }
@@ -715,7 +770,30 @@ impl Tracer {
                 rebuild(&target, &mut grads)
             }
             "vmap" => {
-                let (fname, decl, vals) = self.transform_args("vmap", args, env, fns);
+                let (fname, decl, vals, frame) = if let Some(Expr::Field(obj, mname)) = args.first() {
+                    let inst = self.trace(obj, env, fns);
+                    let tag = match &inst {
+                        TVal::Record(Some(t), _) => t.clone(),
+                        _ => die("vmap of a method needs a module instance"),
+                    };
+                    let module = self.modules.get(&tag.module)
+                        .unwrap_or_else(|| die(&format!("unknown module: {}", tag.module)))
+                        .clone();
+                    let decl = module.method(mname)
+                        .unwrap_or_else(|| die(&format!("module {} has no method {}", tag.module, mname)))
+                        .clone();
+                    if args.len() - 1 != decl.params.len() - 1 {
+                        die(&format!("vmap(.{}) expects {} args after the method, got {}",
+                                     mname, decl.params.len() - 1, args.len() - 1));
+                    }
+                    let mut vals = vec![inst];
+                    vals.extend(args[1..].iter().map(|a| self.trace(a, env, fns)));
+                    let frame: HashMap<String, f64> = tag.statics.iter().cloned().collect();
+                    (format!(".{}", mname), std::borrow::Cow::Owned(decl), vals, frame)
+                } else {
+                    let (fname, decl, vals) = self.transform_args("vmap", args, env, fns);
+                    (fname, decl, vals, HashMap::new())
+                };
                 let mut k = 0;
                 let mut prefix: Vec<usize> = Vec::new();
                 let mut any_tensor = false;
@@ -774,7 +852,7 @@ impl Tracer {
                         }
                     }
                 }
-                self.statics.push(HashMap::new());
+                self.statics.push(frame);
                 let y = self.trace(&decl.body, &env2, fns).tensor("vmap function result");
                 self.statics.pop();
                 let val = if y.bdims == k + 1 {
@@ -845,13 +923,19 @@ impl Tracer {
         }
     }
 
-    pub fn transform_args<'f>(&mut self, transform: &str, args: &[Expr], env: &HashMap<String, TVal>, fns: &'f HashMap<String, Decl>) -> (String, &'f Decl, Vec<TVal>) {
+    pub fn transform_args<'f>(&mut self, transform: &str, args: &[Expr], env: &HashMap<String, TVal>, fns: &'f HashMap<String, Decl>) -> (String, std::borrow::Cow<'f, Decl>, Vec<TVal>) {
         let fname = match args.first() {
             Some(Expr::Var(s)) => s.clone(),
             _ => die(&format!("{} expects a function name as its first argument", transform)),
         };
-        let decl = fns.get(&fname)
-            .unwrap_or_else(|| die(&format!("undefined function: {}", fname)));
+        let decl = match fns.get(&fname) {
+            Some(decl) => std::borrow::Cow::Borrowed(decl),
+            None => {
+                let params: Vec<String> = (0..args.len() - 1).map(|i| format!("__arg{}", i)).collect();
+                let body = Expr::Call(fname.clone(), params.iter().map(|p| Expr::Var(p.clone())).collect());
+                std::borrow::Cow::Owned(Decl { params, body })
+            }
+        };
         if args.len() - 1 != decl.params.len() {
             die(&format!("{}({}) expects {} args after the function name, got {}",
                          transform, fname, decl.params.len(), args.len() - 1));

@@ -1,37 +1,37 @@
-fn double(x):
+function double(x):
   x * 2.0
 
 print(vmap(double, [1.0, 2.0, 3.0]))
 
-fn nsq(v):
+function nsq(v):
   sum(v * v)
 
 print(vmap(nsq, [[3.0, 4.0], [6.0, 8.0]]))
 
-fn dotp(a, b):
+function dotp(a, b):
   sum(a * b)
 
 print(vmap(dotp, [[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]))
 
-fn lin(x):
+function lin(x):
   matmul([[1.0, 0.0], [0.0, 2.0]], x)
 
 print(vmap(lin, [[1.0, 1.0], [2.0, 3.0]]))
 
-fn dnsq(v):
+function dnsq(v):
   grad(nsq, v)
 
 print(vmap(dnsq, [[3.0, 4.0], [1.0, 2.0]]))
 
-fn agg(m):
+function agg(m):
   sum(vmap(nsq, m))
 
 print(grad(agg, [[1.0, 2.0], [3.0, 4.0]]))
 
-fn perl(x):
+function perl(x):
   sum(matmul([[1.0, 2.0], [3.0, 4.0]], x))
 
-fn aggl(m):
+function aggl(m):
   sum(vmap(perl, m))
 
 print(grad(aggl, [[1.0, 1.0], [1.0, 1.0]]))

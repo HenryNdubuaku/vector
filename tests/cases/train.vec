@@ -1,4 +1,4 @@
-fn loss(w):
+function loss(w):
   ys = load("tests/cases/data/v.npy")
   d = w - ys
   mean(d * d)

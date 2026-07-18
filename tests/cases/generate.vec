@@ -6,12 +6,12 @@ print(reshape(arange(6), 2, 3))
 print(sin(0.0))
 print(cos(0.0))
 
-fn s(x):
+function s(x):
   sum(sin(x))
 
 print(grad(s, [0.0, 0.0]))
 
-fn r(x):
+function r(x):
   sum(reshape(x, 4) * [1.0, 2.0, 3.0, 4.0])
 
 print(grad(r, [[1.0, 1.0], [1.0, 1.0]]))

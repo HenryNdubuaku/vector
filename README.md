@@ -58,7 +58,7 @@ Training is whole-model arithmetic and the loop compiles to a single XLA op.
 Each epoch shuffles and slices minibatches, like a DataLoader with `shuffle=True`:
 
 ```python
-fn train_epoch(model, inputs, targets, lr, n, batch, batches):
+function train_epoch(model, inputs, targets, lr, n, batch, batches):
   m = model
   perm = permutation(n)
   xs = take(inputs, perm)

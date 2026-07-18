@@ -3,17 +3,17 @@ print(take(e, [2.0, 0.0, 2.0]))
 print(take(e, 3.0))
 print(take([10.0, 20.0, 30.0], 1.0))
 
-fn f(w):
+function f(w):
   sum(take(w, [1.0, 1.0, 3.0]))
 
 print(grad(f, reshape(arange(32), 8, 4)))
 
-fn s(v):
+function s(v):
   sum(sort(v) * [1.0, 2.0, 3.0])
 
 print(grad(s, [3.0, 1.0, 2.0]))
 
-fn pick(r):
+function pick(r):
   take(r, [1.0, 0.0])
 
 print(vmap(pick, [[10.0, 20.0], [30.0, 40.0]]))

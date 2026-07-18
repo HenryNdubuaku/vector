@@ -1,14 +1,14 @@
-fn poly(x):
+function poly(x):
   x * x * 2.0
 
 print(jacobian(poly, [1.0, 2.0]))
 
-fn affine(x):
+function affine(x):
   matmul([[1.0, 2.0], [3.0, 4.0]], x)
 
 print(jacobian(affine, [5.0, 7.0]))
 
-fn jpoly(x):
+function jpoly(x):
   jacobian(poly, x)
 
 print(vmap(jpoly, [[1.0, 2.0], [3.0, 1.0]]))

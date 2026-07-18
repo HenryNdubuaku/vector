@@ -10,7 +10,7 @@ for x in 0.0..1.0 by 0.5:
   print({a: acc, b: x})
 print(acc)
 
-fn f(v):
+function f(v):
   y = v
   for k in 0..2:
     y = y * y

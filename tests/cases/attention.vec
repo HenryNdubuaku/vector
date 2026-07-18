@@ -1,19 +1,19 @@
-fn mm(env, w):
+function mm(env, w):
   matmul(env.x, w)
 
-fn qk(q, k):
+function qk(q, k):
   matmul(q, transpose(k))
 
-fn sm(row):
+function sm(row):
   softmax(row)
 
-fn rows_sm(m):
+function rows_sm(m):
   vmap(sm, m)
 
-fn av(a, v):
+function av(a, v):
   matmul(a, v)
 
-fn attend(p, x):
+function attend(p, x):
   q = vmap(mm, {x: x}, p.wq)
   k = vmap(mm, {x: x}, p.wk)
   v = vmap(mm, {x: x}, p.wv)
@@ -22,15 +22,15 @@ fn attend(p, x):
   heads = vmap(av, att, v)
   sum(vmap(av, heads, p.wo), 0)
 
-fn xent(logits, target):
+function xent(logits, target):
   logsumexp(logits) - sum(one_hot(target, 16) * logits)
 
-fn seq_loss(p, ids, targets):
+function seq_loss(p, ids, targets):
   x = take(p.wte, ids) + p.wpe
   logits = matmul(attend(p, x), p.head)
   mean(vmap(xent, logits, targets))
 
-fn batch_loss(p, idsb, targetsb):
+function batch_loss(p, idsb, targetsb):
   mean(vmap(seq_loss, p, idsb, targetsb))
 
 rows = matmul(reshape(arange(4.0), 4, 1), reshape(zeros(4) + 1.0, 1, 4))

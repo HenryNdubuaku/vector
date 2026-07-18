@@ -7,13 +7,13 @@ Every function below is demonstrated with verified output in [examples.md](examp
 | Form | Meaning |
 | ---- | ------- |
 | `x = expr` | binding (immutable; a new binding shadows) |
-| `fn name(a, b):` | function — body is an indented expression list, last expression is the value |
+| `function name(a, b):` | function — body is an indented expression list, last expression is the value |
 | `module Name(arg):` | module — fields (`w = ...`) plus methods; must define `forward(self, ...)` |
 | `for i in 0..n:` | loop, compiled to one XLA while op; `by` sets the step: `for x in 0.0..1.0 by 0.25:` |
 | `while cond:` | loop until a scalar comparison turns false, compiled to one XLA while op; the body must reassign a binding the condition depends on |
 | `x[i]`, `x[iv]` | index rows along axis 0 — a runtime scalar picks one row, a vector gathers rows (same as `take`); negative literals count from the end: `x[-1]` |
 | `x[a:b]` | slice along axis 0 with compile-time bounds; open ends and negative bounds work: `x[:3]`, `x[-2:]` |
-| `import mlp` | bring `fn`/`module` declarations from `mlp.vec` (dots are subdirectories, path relative to the importing file) |
+| `import mlp` | bring `function`/`module` declarations from `mlp.vec` (dots are subdirectories, path relative to the importing file) |
 | `[1.0, 2.0]` | array literal |
 | `{a: x, b: y}` | record literal; `.a` accesses a field |
 | `< > <= >= == !=` | comparisons, producing booleans for `where` |
@@ -24,14 +24,14 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 ## Transforms
 
 - `grad(f, args...)` — gradient of scalar-valued `f` with respect to its first argument; works on records and module instances (`grad(model.loss, x, t)` returns a model-shaped gradient)
-- `vmap(f, args...)` — map `f` over axis 0 of the tensor arguments; record arguments pass through unmapped (weights, config), so `vmap(step, model, xb)` maps the batch while the model is shared; nestable, and inner maps lift shallower tensors automatically
+- `vmap(f, args...)` — map `f` over axis 0 of the tensor arguments; `f` may be a builtin (`vmap(matmul, a, b)` is batched matmul) or a method (`vmap(self.sequence_loss, ids, targets)` — the instance passes through unmapped); record arguments pass through unmapped (weights, config), so `vmap(step, model, xb)` maps the batch while the model is shared; nestable, and inner maps lift shallower tensors automatically
 - `jacobian(f, x)` — jacobian of vector-valued `f`
 
 ## Math
 
 - elementwise: `exp(x)`, `log(x)`, `tanh(x)`, `sqrt(x)`, `sin(x)`, `cos(x)`, `floor(x)`, `abs(x)`, `mod(a, b)`, `pow(a, b)`, `maximum(a, b)`, `minimum(a, b)`
 - reductions: `sum(x)`, `mean(x)`, `max(x)`, `min(x)` — optional trailing axis: `sum(m, 0)`
-- linear algebra: `matmul(a, b)` (rank 1 and 2), `transpose(m)`
+- linear algebra: `matmul(a, b)` (rank 1 and 2; higher ranks via `vmap(matmul, a, b)`), `transpose(m)` — or with an axis permutation: `transpose(x, 1, 0, 2)`
 - casts: `f32(x)`, `f64(x)`
 
 ## Arrays
@@ -40,7 +40,8 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 - `linspace(start, stop, count)`
 - `zeros(dims...)`, `randn(dims...)`
 - `reshape(x, dims...)` — dims are compile-time constants; arithmetic on constants works: `reshape(x, h * w)`
-- `slice(x, start, size)` — axis 0; `start` may be a runtime scalar, `size` is static
+- `slice(x, start, size)` — axis 0; `start` may be a runtime scalar, `size` is static; a vector of starts gathers a batch of windows in one op: `slice(data, starts, size)` → `[count, size, ...]`
+- `len(x)` — the leading dimension as a number (fixed at compile time)
 - `concat(a, b, ...)` — join along axis 0; `stack(a, b, ...)` — join along a new axis 0
 - `take(values, indices)` — fancy indexing along axis 0 (embedding lookups scale to any vocab); differentiable, duplicate indices accumulate gradient, out-of-range indices clamp
 - `sort(x)`, `argsort(x)` — vectors; batch with `vmap`; `sort` is differentiable
@@ -55,15 +56,24 @@ Numbers are `f32` by default. Broadcasting aligns trailing dimensions and never 
 Random at run time, different every run; set `VECTOR_SEED=<n>` to reproduce a run exactly — the same seed gives the same values on every backend. Initializers (`randn`, `glorot_uniform`, ...) stay fixed at compile time so programs are testable.
 
 - `uniform(dims...)` — uniform values in [0, 1]
+- `normal(dims...)` — standard normal values (Box-Muller over uniform)
 - `permutation(n)` — a random permutation of the indices 0..n; shuffle data with `take(x, permutation(n))`
+- `random_windows(data, count, size)` — `count` random contiguous windows of `size` from axis 0; the data loading idiom for sequence models
 - `dropout(x, rate)` — inverted dropout: keeps values with probability 1-rate and rescales; differentiable; becomes identity in `export`ed models
 - `sample(logits)` — draw one index from a categorical distribution over a logits vector (Gumbel-max); batch with `vmap`; use `argmax` for greedy
 
 ## Neural networks
 
 - `Linear(in_size, out_size)` — stdlib module: `w` (glorot uniform), `b` (zeros), `forward(self, x)`
+- `LayerNorm(dim)` — stdlib module normalizing each row of a matrix: `gain`, `bias`, `forward(self, x)`; `token_norm(params, token)` is its per-row helper for direct `vmap` use
+- `Embedding(count, dim)` — stdlib module: `w` (normal, std 0.02); calling it with an id vector gathers rows, differentiably
+- `softmax_rows(m)` — softmax over each row of a matrix
 - initializers: `glorot_uniform(fan_in, fan_out)`, `glorot_normal(fan_in, fan_out)`, `he_uniform(fan_in, fan_out)`, `he_normal(fan_in, fan_out)`, `lecun_uniform(fan_in, fan_out)`, `lecun_normal(fan_in, fan_out)`
-- stdlib functions (rank-1, written in vector itself; batch with `vmap`): `relu(x)`, `sigmoid(x)`, `softmax(x)`, `logsumexp(x)`, `var(x)`, `std(x)`, `norm(x)`
+- stdlib functions (rank-1, written in vector itself; batch with `vmap`): `relu(x)`, `sigmoid(x)`, `softmax(x)`, `logsumexp(x)`, `var(x)`, `std(x)`, `norm(x)`, `layer_norm(x, gain, bias)`
+- losses: `mse(pred, target)`; `cross_entropy(logits, target)` — from logits, target is a class index; batch with `vmap`
+- optimizers hold their state in a record with the params at `.p`: `adam_init(model)` makes the state, `adam(st, grad, lr)` steps it; `adamw(st, grad, lr, decay)` decouples weight decay; `sgd_init(model)` + `sgd(st, grad, lr, momentum)`
+- schedules are plain functions of the step: `cosine_decay(lr, step, total)`, `warmup(lr, step, steps)`
+- clipping: `clip(x, lo, hi)`, `clip_by_norm(x, max_norm)`
 
 ## Text
 

@@ -1,0 +1,94 @@
+# A byte-level GPT trained on Shakespeare, written entirely in vector
+
+vocab = 256
+block_size = 64
+n_embd = 64
+n_head = 4
+head_dim = 16
+batch_size = 16
+learning_rate = 0.001
+rounds = 20
+chunk_steps = 100
+sample_len = 300
+
+module Block(block, dim, heads, hdim):
+  attention_norm = LayerNorm(dim)
+  query = Linear(dim, dim)
+  key = Linear(dim, dim)
+  value = Linear(dim, dim)
+  out_proj = Linear(dim, dim)
+  mlp_norm = LayerNorm(dim)
+  expand = Linear(dim, 4 * dim)
+  contract = Linear(4 * dim, dim)
+
+  causal_mask(self):
+    positions = matmul(reshape(arange(block), block, 1), reshape(zeros(block) + 1.0, 1, block))
+    where(positions >= transpose(positions), 0.0, -1000000000.0)
+
+  attention(self, x):
+    q = transpose(reshape(self.query(x), block, heads, hdim), 1, 0, 2)
+    k = transpose(reshape(self.key(x), block, heads, hdim), 1, 0, 2)
+    v = transpose(reshape(self.value(x), block, heads, hdim), 1, 0, 2)
+    scores = vmap(matmul, q, transpose(k, 0, 2, 1)) / sqrt(hdim) + self.causal_mask()
+    merged = transpose(vmap(matmul, vmap(softmax_rows, scores), v), 1, 0, 2)
+    self.out_proj(reshape(merged, block, dim))
+
+  forward(self, x):
+    attended = x + self.attention(self.attention_norm(x))
+    attended + self.contract(relu(self.expand(self.mlp_norm(attended))))
+
+module Gpt(vocab, block, dim, heads, hdim):
+  token_embedding = Embedding(vocab, dim)
+  position_embedding = Embedding(block, dim)
+  block1 = Block(block, dim, heads, hdim)
+  block2 = Block(block, dim, heads, hdim)
+  final_norm = LayerNorm(dim)
+  head = Linear(dim, vocab)
+
+  logits(self, ids):
+    x = self.token_embedding(ids) + self.position_embedding(arange(block))
+    x = self.block1(x)
+    x = self.block2(x)
+    self.head(self.final_norm(x))
+
+  forward(self, ids):
+    self.logits(ids)
+
+  sequence_loss(self, ids, targets):
+    mean(vmap(cross_entropy, self.logits(ids), targets))
+
+  loss(self, ids, targets):
+    mean(vmap(self.sequence_loss, ids, targets))
+
+
+data = load("https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt")
+
+function get_batch(data, count, size):
+  starts = floor(uniform(count) * (len(data) - size - 1.0))
+  {x: slice(data, starts, size), y: slice(data, starts + 1.0, size)}
+
+function train_chunk(state, data, lr, count, size, steps):
+  for step in 0..steps:
+    batch = get_batch(data, count, size)
+    state = adam(state, grad(state.p.loss, batch.x, batch.y), lr)
+  state
+
+state = adam_init(Gpt(vocab, block_size, n_embd, n_head, head_dim))
+eval_x = reshape(data[:batch_size * block_size], batch_size, block_size)
+eval_y = reshape(data[1:batch_size * block_size + 1], batch_size, block_size)
+
+for round in 0..rounds:
+  state = train_chunk(state, data, learning_rate, batch_size, block_size, chunk_steps)
+  print(state.p.loss(eval_x, eval_y))
+
+model = state.p
+window = data[:block_size]
+generated = zeros(sample_len)
+for step in 0..sample_len:
+  next = sample(model(window)[-1])
+  window = concat(window[1:], reshape(next, 1))
+  generated = generated + next * one_hot(step, sample_len)
+
+print(text(data[:block_size]))
+print(text(generated))
+save(model, "gpt.safetensors")
