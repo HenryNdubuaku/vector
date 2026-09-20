@@ -305,9 +305,9 @@ impl Tracer {
                     let val = self.emit(OpKind::Gather(1), vec![x.val.id, indices.id], shape.clone(), x.val.dtype);
                     return TVal::Tensor(BVal { val, bdims: 0 });
                 }
-                let bound = |t: &Tracer, e: &Option<Box<Expr>>, default: usize| -> usize {
+                let bound = |t: &mut Tracer, e: &Option<Box<Expr>>, default: usize| -> usize {
                     let Some(e) = e else { return default };
-                    let v = t.num_lit(e, env, "slice bound");
+                    let v = t.num_lit(e, env, "slice bound", fns);
                     if v.fract() != 0.0 {
                         die("slice bounds must be integers");
                     }
@@ -375,10 +375,10 @@ impl Tracer {
 
     pub fn trace_for(&mut self, var: &String, start_e: &Expr, end_e: &Expr, step_e: &Option<Box<Expr>>, stmts: &[(Option<String>, Expr)], env: &HashMap<String, TVal>, fns: &HashMap<String, Decl>) -> HashMap<String, TVal> {
 
-                let start = self.num_lit(start_e, env, "range start");
-                let end = self.num_lit(end_e, env, "range end");
+                let start = self.num_lit(start_e, env, "range start", fns);
+                let end = self.num_lit(end_e, env, "range end", fns);
                 let step = match step_e {
-                    Some(e) => self.num_lit(e, env, "range step"),
+                    Some(e) => self.num_lit(e, env, "range step", fns),
                     None => 1.0,
                 };
                 if step == 0.0 {
@@ -703,13 +703,13 @@ impl Tracer {
         }
     }
 
-    pub fn num_lit(&self, e: &Expr, env: &HashMap<String, TVal>, what: &str) -> f64 {
+    pub fn static_trace(&mut self, e: &Expr, env: &HashMap<String, f64>, fns: &HashMap<String, Decl>) -> f64 {
         match e {
             Expr::Num(n) => *n,
-            Expr::Neg(inner) => -self.num_lit(inner, env, what),
+            Expr::Neg(inner) => -self.static_trace(inner, env, fns),
             Expr::Bin(op, a, b) => {
-                let a = self.num_lit(a, env, what);
-                let b = self.num_lit(b, env, what);
+                let a = self.static_trace(a, env, fns);
+                let b = self.static_trace(b, env, fns);
                 match op {
                     crate::parser::Op::Add => a + b,
                     crate::parser::Op::Sub => a - b,
@@ -718,34 +718,82 @@ impl Tracer {
                 }
             }
             Expr::Var(s) => {
-                if let Some(v) = env.get(s) {
-                    if let TVal::Tensor(b) = v {
-                        if b.val.shape.is_empty() {
-                            if let OpKind::Constant(n) = self.nodes[b.val.id].kind {
-                                return n;
-                            }
-                        }
-                    }
-                    die(&format!("{} must be a compile-time constant; '{}' is computed at runtime", what, s));
-                }
-                self.static_num(s)
+                env.get(s)
+                    .copied()
+                    .or_else(|| self.static_num(s))
                     .or_else(|| named_const(s))
-                    .unwrap_or_else(|| die(&format!("{} must be a number literal", what)))
+                    .unwrap_or_else(|| die(&format!("compile-time constant '{}' is not known", s)))
             }
-            _ => die(&format!("{} must be a number literal", what)),
+            Expr::Call(name, args) => {
+                if let Some(decl) = fns.get(name) {
+                    if decl.params.len() != args.len() {
+                        die(&format!("arity mismatch: {} expects {} args, got {}",
+                                     name, decl.params.len(), args.len()));
+                    }
+                    let mut env2 = HashMap::new();
+                    for (param, arg) in decl.params.iter().zip(args.iter()) {
+                        env2.insert(param.clone(), self.static_trace(arg, env, fns));
+                    }
+                    self.statics.push(HashMap::new());
+                    let out = self.static_trace(&decl.body, &env2, fns);
+                    self.statics.pop();
+                    out
+                } else {
+                    if args.len() != 1 {
+                        die(&format!("{} expects 1 arg, got {}", name, args.len()));
+                    }
+                    let v = self.static_trace(&args[0], env, fns);
+                    match name.as_str() {
+                        "exp" => v.exp(),
+                        "log" => v.ln(),
+                        "tanh" => v.tanh(),
+                        "sqrt" => v.sqrt(),
+                        "sin" => v.sin(),
+                        "cos" => v.cos(),
+                        "floor" => v.floor(),
+                        _ => die(&format!("compile-time function '{}' is not supported", name)),
+                    }
+                }
+            }
+            Expr::Let(name, value, body) => {
+                let value = self.static_trace(value, env, fns);
+                let mut env2 = env.clone();
+                env2.insert(name.clone(), value);
+                self.static_trace(body, &env2, fns)
+            }
+            Expr::Seq(first, rest) => {
+                self.static_trace(first, env, fns);
+                self.static_trace(rest, env, fns)
+            }
+            _ => die("compile-time expression must evaluate to a scalar"),
         }
     }
 
-    pub fn int_lit(&self, e: &Expr, env: &HashMap<String, TVal>, what: &str) -> usize {
-        let n = self.num_lit(e, env, what);
+    pub fn num_lit(&mut self, e: &Expr, env: &HashMap<String, TVal>, what: &str, fns: &HashMap<String, Decl>) -> f64 {
+        let mut static_env = HashMap::new();
+        for (name, value) in env {
+            if let TVal::Tensor(b) = value {
+                if b.val.shape.is_empty() {
+                    if let OpKind::Constant(n) = self.nodes[b.val.id].kind {
+                        static_env.insert(name.clone(), n);
+                    }
+                }
+            }
+        }
+        let _ = what;
+        self.static_trace(e, &static_env, fns)
+    }
+
+    pub fn int_lit(&mut self, e: &Expr, env: &HashMap<String, TVal>, what: &str, fns: &HashMap<String, Decl>) -> usize {
+        let n = self.num_lit(e, env, what, fns);
         if n.fract() != 0.0 || n < 0.0 {
             die(&format!("{} must be a non-negative integer literal", what));
         }
         n as usize
     }
 
-    pub fn axis_lit(&self, e: &Expr, env: &HashMap<String, TVal>, shape: &[usize]) -> usize {
-        let n = self.num_lit(e, env, "reduction axis");
+    pub fn axis_lit(&mut self, e: &Expr, env: &HashMap<String, TVal>, shape: &[usize], fns: &HashMap<String, Decl>) -> usize {
+        let n = self.num_lit(e, env, "reduction axis", fns);
         if n.fract() != 0.0 || n < 0.0 || n as usize >= shape.len() {
             die(&format!("reduction axis {} out of range for shape {:?}", n, shape));
         }

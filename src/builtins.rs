@@ -15,7 +15,7 @@ impl Tracer {
         }
         let statics: Vec<(String, f64)> = decl.params.iter()
             .zip(args)
-            .map(|(p, a)| (p.clone(), self.num_lit(a, env, &format!("module {} argument", name))))
+            .map(|(p, a)| (p.clone(), self.num_lit(a, env, &format!("module {} argument", name), fns)))
             .collect();
         self.statics.push(statics.iter().cloned().collect());
         let mut env2: HashMap<String, TVal> = HashMap::new();
@@ -66,7 +66,7 @@ impl Tracer {
                 let v = self.trace(&args[0], env, fns).tensor(name);
                 let per = per_shape(&v);
                 let per_axes: Vec<usize> = if args.len() == 2 {
-                    vec![self.axis_lit(&args[1], env, &per)]
+                    vec![self.axis_lit(&args[1], env, &per, fns)]
                 } else {
                     (0..per.len()).collect()
                 };
@@ -139,7 +139,7 @@ impl Tracer {
                 if v.val.shape.len() != 1 {
                     die("bincount expects a vector");
                 }
-                let bins = self.int_lit(&args[1], env, "bincount bins");
+                let bins = self.int_lit(&args[1], env, "bincount bins", fns);
                 if bins == 0 {
                     die("bincount needs at least one bin");
                 }
@@ -227,7 +227,7 @@ impl Tracer {
                 if start.bdims != 0 || start.val.shape.len() > 1 {
                     die("slice start must be a scalar or a vector of starts");
                 }
-                let size = self.int_lit(&args[2], env, "slice size");
+                let size = self.int_lit(&args[2], env, "slice size", fns);
                 if size == 0 || size > x.val.shape[0] {
                     die(&format!("slice size {} out of range for leading dim {}", size, x.val.shape[0]));
                 }
@@ -264,7 +264,7 @@ impl Tracer {
                 if args.is_empty() || args.len() > 3 {
                     die(&format!("arange expects (stop), (start, stop) or (start, stop, step), got {} args", args.len()));
                 }
-                let lits: Vec<f64> = args.iter().map(|a| self.num_lit(a, env, "arange argument")).collect();
+                let lits: Vec<f64> = args.iter().map(|a| self.num_lit(a, env, "arange argument", fns)).collect();
                 let (start, stop, step) = match lits.len() {
                     1 => (0.0, lits[0], 1.0),
                     2 => (lits[0], lits[1], 1.0),
@@ -288,9 +288,9 @@ impl Tracer {
                 if args.len() != 3 {
                     die(&format!("linspace expects (start, stop, count), got {} args", args.len()));
                 }
-                let start = self.num_lit(&args[0], env, "linspace start");
-                let stop = self.num_lit(&args[1], env, "linspace stop");
-                let count = self.int_lit(&args[2], env, "linspace count");
+                let start = self.num_lit(&args[0], env, "linspace start", fns);
+                let stop = self.num_lit(&args[1], env, "linspace stop", fns);
+                let count = self.int_lit(&args[2], env, "linspace count", fns);
                 if count == 0 {
                     die("linspace count must be at least 1");
                 }
@@ -307,7 +307,7 @@ impl Tracer {
                     die("reshape expects a value and dimension literals");
                 }
                 let v = self.trace(&args[0], env, fns).tensor("reshape");
-                let dims: Vec<usize> = args[1..].iter().map(|a| self.int_lit(a, env, "reshape dimension")).collect();
+                let dims: Vec<usize> = args[1..].iter().map(|a| self.int_lit(a, env, "reshape dimension", fns)).collect();
                 let per = per_shape(&v);
                 if dims.iter().product::<usize>() != per.iter().product::<usize>() {
                     die(&format!("reshape from {:?} to {:?} changes element count", per, dims));
@@ -321,15 +321,15 @@ impl Tracer {
                 if args.len() != 2 {
                     die(&format!("{} expects (fan_in, fan_out), got {} args", name, args.len()));
                 }
-                let fan_in = self.int_lit(&args[0], env, "fan_in");
-                let fan_out = self.int_lit(&args[1], env, "fan_out");
+                let fan_in = self.int_lit(&args[0], env, "fan_in", fns);
+                let fan_out = self.int_lit(&args[1], env, "fan_out", fns);
                 self.initializer(name, fan_in, fan_out)
             }
             "zeros" | "randn" => {
                 if args.is_empty() {
                     die(&format!("{} expects dimension literals", name));
                 }
-                let dims: Vec<usize> = args.iter().map(|a| self.int_lit(a, env, "dimension")).collect();
+                let dims: Vec<usize> = args.iter().map(|a| self.int_lit(a, env, "dimension", fns)).collect();
                 if name == "zeros" {
                     let val = self.zeros(&dims, Dtype::F32);
                     return TVal::Tensor(BVal { val, bdims: 0 });
@@ -566,8 +566,8 @@ impl Tracer {
                     die(&format!("resize expects (image, height, width), got {} args", args.len()));
                 }
                 let v = self.trace(&args[0], env, fns).tensor("resize");
-                let h = self.int_lit(&args[1], env, "resize height");
-                let w = self.int_lit(&args[2], env, "resize width");
+                let h = self.int_lit(&args[1], env, "resize height", fns);
+                let w = self.int_lit(&args[2], env, "resize width", fns);
                 self.resize_image(v, h, w)
             }
             "crop" => {
@@ -575,10 +575,10 @@ impl Tracer {
                     die(&format!("crop expects (image, top, left, height, width), got {} args", args.len()));
                 }
                 let v = self.trace(&args[0], env, fns).tensor("crop");
-                let top = self.int_lit(&args[1], env, "crop top");
-                let left = self.int_lit(&args[2], env, "crop left");
-                let h = self.int_lit(&args[3], env, "crop height");
-                let w = self.int_lit(&args[4], env, "crop width");
+                let top = self.int_lit(&args[1], env, "crop top", fns);
+                let left = self.int_lit(&args[2], env, "crop left", fns);
+                let h = self.int_lit(&args[3], env, "crop height", fns);
+                let w = self.int_lit(&args[4], env, "crop width", fns);
                 self.crop_image(v, top, left, h, w)
             }
             "imshow" => {
@@ -600,7 +600,7 @@ impl Tracer {
                 if args.is_empty() {
                     die("uniform expects dimension literals");
                 }
-                let dims: Vec<usize> = args.iter().map(|a| self.int_lit(a, env, "dimension")).collect();
+                let dims: Vec<usize> = args.iter().map(|a| self.int_lit(a, env, "dimension", fns)).collect();
                 let val = self.rng_uniform(&dims);
                 TVal::Tensor(BVal { val, bdims: 0 })
             }
@@ -608,7 +608,7 @@ impl Tracer {
                 if args.is_empty() {
                     die("normal expects dimension literals");
                 }
-                let dims: Vec<usize> = args.iter().map(|a| self.int_lit(a, env, "dimension")).collect();
+                let dims: Vec<usize> = args.iter().map(|a| self.int_lit(a, env, "dimension", fns)).collect();
                 let u1 = self.rng_uniform(&dims);
                 let u2 = self.rng_uniform(&dims);
                 let floor_c = self.constant(1e-7, Dtype::F32);
@@ -628,7 +628,7 @@ impl Tracer {
                     die(&format!("dropout expects (x, rate), got {} args", args.len()));
                 }
                 let x = self.trace(&args[0], env, fns).tensor("dropout");
-                let rate = self.num_lit(&args[1], env, "dropout rate");
+                let rate = self.num_lit(&args[1], env, "dropout rate", fns);
                 if !(0.0..1.0).contains(&rate) {
                     die(&format!("dropout rate must be in [0, 1), got {}", rate));
                 }
@@ -689,7 +689,7 @@ impl Tracer {
                     die(&format!("one_hot expects (indices, depth), got {} args", args.len()));
                 }
                 let v = self.trace(&args[0], env, fns).tensor("one_hot");
-                let n = self.int_lit(&args[1], env, "one_hot depth");
+                let n = self.int_lit(&args[1], env, "one_hot depth", fns);
                 self.one_hot_val(v, n)
             }
             "take" => {
@@ -704,7 +704,7 @@ impl Tracer {
                 if args.len() > 1 {
                     let v = self.trace(&args[0], env, fns).tensor("transpose");
                     let per = per_shape(&v);
-                    let axes: Vec<usize> = args[1..].iter().map(|a| self.int_lit(a, env, "transpose axis")).collect();
+                    let axes: Vec<usize> = args[1..].iter().map(|a| self.int_lit(a, env, "transpose axis", fns)).collect();
                     let mut seen: Vec<usize> = axes.clone();
                     seen.sort();
                     if seen != (0..per.len()).collect::<Vec<usize>>() {
@@ -742,8 +742,8 @@ impl Tracer {
                 }
                 let x = self.trace(&args[0], env, fns).tensor("conv");
                 let k = self.trace(&args[1], env, fns).tensor("conv kernel");
-                let stride = self.int_lit(&args[2], env, "conv stride");
-                let pad = self.int_lit(&args[3], env, "conv padding");
+                let stride = self.int_lit(&args[2], env, "conv stride", fns);
+                let pad = self.int_lit(&args[3], env, "conv padding", fns);
                 if stride == 0 {
                     die("conv stride must be positive");
                 }
@@ -1032,4 +1032,3 @@ impl Tracer {
         (fname, decl, vals)
     }
 }
-
